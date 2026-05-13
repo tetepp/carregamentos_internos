@@ -5,272 +5,740 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.patches as patches
 import traceback
+from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional, Tuple
 
-def parse_float(val_str):
+# ══════════════════════════════════════════════════════════════════════════════
+# PALETA DE CORES - Design Escuro Moderno
+# ══════════════════════════════════════════════════════════════════════════════
+CORES = {
+    "bg_main":      "#1a1d27",
+    "bg_sidebar":   "#141620",
+    "bg_panel":     "#1e2130",
+    "bg_canvas":    "#0f1117",
+    "bg_topbar":    "#141620",
+    "border":       "#2d3148",
+    "primary":      "#2563eb",
+    "primary_hover":"#1d4ed8",
+    "success":      "#22c55e",
+    "danger":       "#ef4444",
+    "warning":      "#f59e0b",
+    "text_pri":     "#e2e8f0",
+    "text_sec":     "#94a3b8",
+    "text_muted":   "#4b5563",
+    "sidebar_btn_bg":  "#1e2130",
+    "sidebar_btn_act": "#1e3a5f",
+    "sidebar_sect": "#6b7280",
+    "carga_pontual": "#ef4444",
+    "carga_momento": "#f59e0b",
+    "carga_distrib": "#22c55e",
+}
+
+def _get_screen_scale() -> float:
+    """Retorna fator de escala baseado na resolução da tela (1.0 para HD, 0.85 para menor)."""
+    try:
+        import tkinter as _tk
+        _r = _tk.Tk()
+        _r.withdraw()
+        w = _r.winfo_screenwidth()
+        _r.destroy()
+        if w >= 1920:
+            return 1.0
+        elif w >= 1280:
+            return 0.88
+        else:
+            return 0.78
+    except Exception:
+        return 0.88
+
+_SCALE = _get_screen_scale()
+
+def _fs(size: int) -> int:
+    """Escala um tamanho de fonte."""
+    return max(7, round(size * _SCALE))
+
+def _px(size: int) -> int:
+    """Escala um tamanho de pixel."""
+    return max(1, round(size * _SCALE))
+
+FONT_TITLE  = ("Segoe UI", _fs(10), "bold")
+FONT_BODY   = ("Segoe UI", _fs(9))
+FONT_SMALL  = ("Segoe UI", _fs(8))
+FONT_MONO_B = ("Consolas", _fs(10), "bold")
+FONT_HEADING = ("Segoe UI", _fs(11), "bold")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UTILITÁRIOS
+# ══════════════════════════════════════════════════════════════════════════════
+def parse_float(val_str: str) -> float:
     """Trata a entrada do utilizador permitindo o uso de vírgula decimal."""
     try:
         return float(str(val_str).replace(',', '.'))
     except ValueError:
         raise ValueError("Formato numérico inválido.")
 
-def clean_zero(val):
+def clean_zero(val: float) -> float:
     """Evita a exibição de '-0.00' por imprecisão de ponto flutuante."""
     return 0.0 if abs(val) < 1e-9 else val
 
-# ==========================================================
-# 1. MOTOR FÍSICO (Back-end e Cálculo Numérico)
-# ==========================================================
+def separador(parent, pady=6):
+    """Cria um separador visual."""
+    tk.Frame(parent, height=1, bg=CORES["border"]).pack(
+        fill=tk.X, padx=10, pady=pady
+    )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPONENTES DE UI REUTILIZÁVEIS
+# ══════════════════════════════════════════════════════════════════════════════
+class SidebarButton(tk.Frame):
+    """Botão estilizado para a barra lateral."""
+    def __init__(self, parent, text, icon="•", command=None):
+        super().__init__(parent, bg=CORES["bg_sidebar"], cursor="hand2")
+        self.command = command
+        self.active = False
+        
+        self.label = tk.Label(
+            self, text=f"  {icon}  {text}",
+            bg=CORES["bg_sidebar"], fg=CORES["text_sec"],
+            font=FONT_BODY, anchor="w", padx=_px(5), pady=_px(5)
+        )
+        self.label.pack(fill=tk.X)
+        
+        for w in (self, self.label):
+            w.bind("<Enter>", self.on_enter)
+            w.bind("<Leave>", self.on_leave)
+            w.bind("<Button-1>", self.on_click)
+    
+    def on_enter(self, _):
+        if not self.active:
+            self.label.config(bg=CORES["sidebar_btn_bg"], fg=CORES["text_pri"])
+    
+    def on_leave(self, _):
+        if not self.active:
+            self.label.config(bg=CORES["bg_sidebar"], fg=CORES["text_sec"])
+    
+    def on_click(self, _):
+        if self.command:
+            self.command()
+    
+    def set_active(self, active):
+        self.active = active
+        if active:
+            self.label.config(
+                bg=CORES["sidebar_btn_act"], fg="#93c5fd",
+                font=("Segoe UI", 9, "bold")
+            )
+        else:
+            self.label.config(
+                bg=CORES["bg_sidebar"], fg=CORES["text_sec"],
+                font=FONT_BODY
+            )
+
+class DarkButton(tk.Button):
+    """Botão estilizado para o tema escuro."""
+    def __init__(self, parent, text, bg=None, fg=None, command=None):
+        super().__init__(
+            parent, text=text,
+            bg=bg or CORES["primary"], fg=fg or "white",
+            activebackground=CORES["primary_hover"], activeforeground="white",
+            relief=tk.FLAT, bd=0, cursor="hand2",
+            font=FONT_BODY, padx=_px(8), pady=_px(5), command=command
+        )
+
+class DarkEntry(tk.Entry):
+    """Entry estilizada para o tema escuro."""
+    def __init__(self, parent, **kwargs):
+        super().__init__(
+            parent,
+            bg=CORES["bg_canvas"], fg=CORES["text_pri"],
+            insertbackground=CORES["text_pri"],
+            font=FONT_BODY, justify="center",
+            relief=tk.FLAT, bd=0,
+            highlightthickness=1, highlightbackground=CORES["border"],
+            highlightcolor=CORES["primary"],
+            **kwargs
+        )
+
+class DarkCombobox(ttk.Combobox):
+    """Combobox estilizada."""
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, font=FONT_BODY, state="readonly", **kwargs)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MOTOR FÍSICO (Back-end)
+# ══════════════════════════════════════════════════════════════════════════════
+@dataclass
+class CargaPontual:
+    pos: float
+    valor: float
+
+@dataclass
+class MomentoConcentrado:
+    pos: float
+    valor: float
+
+@dataclass
+class CargaDistribuida:
+    q_inicial: float
+    q_final: float
+    inicio: float
+    fim: float
+
+@dataclass
+class Reacao:
+    tipo: str  # 'forca' ou 'momento'
+    pos: float
+    valor: float
+    nome: str
+
 class VigaEngine:
-    def __init__(self, comprimento):
+    """Motor de cálculo estrutural."""
+    
+    def __init__(self, comprimento: float):
         self.L = comprimento
-        self.cargas_pontuais = []
-        self.cargas_distribuidas = []
-        self.momentos = []
-        self.reacoes_calculadas = []
-
-    def adicionar_carga_pontual(self, pos, valor):
-        self.cargas_pontuais.append({"pos": pos, "valor": valor})
-
-    def adicionar_carga_distribuida(self, q_ini, q_fim, inicio, fim):
-        self.cargas_distribuidas.append({"q_inicial": q_ini, "q_final": q_fim, "inicio": inicio, "fim": fim})
-
-    def adicionar_momento(self, pos, valor):
-        self.momentos.append({"pos": pos, "valor": valor})
-
-    def calcular_reacoes(self, tipo_apoio, x_a, x_b=None):
+        self.cargas_pontuais: List[CargaPontual] = []
+        self.cargas_distribuidas: List[CargaDistribuida] = []
+        self.momentos: List[MomentoConcentrado] = []
+        self.reacoes_calculadas: List[Reacao] = []
+    
+    def adicionar_carga_pontual(self, pos: float, valor: float):
+        self.cargas_pontuais.append(CargaPontual(pos, valor))
+    
+    def adicionar_carga_distribuida(self, q_ini: float, q_fim: float, inicio: float, fim: float):
+        self.cargas_distribuidas.append(CargaDistribuida(q_ini, q_fim, inicio, fim))
+    
+    def adicionar_momento(self, pos: float, valor: float):
+        self.momentos.append(MomentoConcentrado(pos, valor))
+    
+    def calcular_reacoes(self, tipo_apoio: str, x_a: float, x_b: Optional[float] = None):
         soma_Fy = 0.0
         soma_M_A = 0.0
-
+        
         for p in self.cargas_pontuais:
-            soma_Fy += p["valor"]
-            soma_M_A += p["valor"] * (p["pos"] - x_a)
-
+            soma_Fy += p.valor
+            soma_M_A += p.valor * (p.pos - x_a)
+        
         for c in self.cargas_distribuidas:
-            L_c = c["fim"] - c["inicio"]
-            if L_c <= 0: continue
+            L_c = c.fim - c.inicio
+            if L_c <= 0:
+                continue
             
-            F_ret = c["q_inicial"] * L_c
-            x_ret = c["inicio"] + L_c / 2.0
+            F_ret = c.q_inicial * L_c
+            x_ret = c.inicio + L_c / 2.0
             
-            F_tri = (c["q_final"] - c["q_inicial"]) * L_c / 2.0
-            x_tri = c["inicio"] + (2.0 / 3.0) * L_c
-
+            F_tri = (c.q_final - c.q_inicial) * L_c / 2.0
+            x_tri = c.inicio + (2.0 / 3.0) * L_c
+            
             F_eq = F_ret + F_tri
             if abs(F_eq) > 1e-9:
                 x_eq = (F_ret * x_ret + F_tri * x_tri) / F_eq
                 soma_Fy += F_eq
                 soma_M_A += F_eq * (x_eq - x_a)
-
+        
         for m in self.momentos:
-            soma_M_A += m["valor"]
-
+            soma_M_A += m.valor
+        
         self.reacoes_calculadas = []
-
+        
         if tipo_apoio == 'engaste':
             Ry = -soma_Fy
             M_eng = -soma_M_A
-            self.reacoes_calculadas.append({"tipo": "forca", "pos": x_a, "valor": clean_zero(Ry), "nome": "Ry"})
-            self.reacoes_calculadas.append({"tipo": "momento", "pos": x_a, "valor": clean_zero(M_eng), "nome": "M_eng"})
+            self.reacoes_calculadas.append(
+                Reacao("forca", x_a, clean_zero(Ry), "Ry")
+            )
+            self.reacoes_calculadas.append(
+                Reacao("momento", x_a, clean_zero(M_eng), "M_eng")
+            )
         else:
             if abs(x_b - x_a) < 1e-6:
-                raise ValueError("Atenção: Os apoios (Pino e Rolete) não podem coincidir na mesma posição física.")
+                raise ValueError("Os apoios não podem coincidir na mesma posição.")
             
             Rb = -soma_M_A / (x_b - x_a)
             Ra = -soma_Fy - Rb
-            self.reacoes_calculadas.append({"tipo": "forca", "pos": x_a, "valor": clean_zero(Ra), "nome": "Ra"})
-            self.reacoes_calculadas.append({"tipo": "forca", "pos": x_b, "valor": clean_zero(Rb), "nome": "Rb"})
-
-    def _get_shear_at(self, x):
+            self.reacoes_calculadas.append(
+                Reacao("forca", x_a, clean_zero(Ra), "Ra")
+            )
+            self.reacoes_calculadas.append(
+                Reacao("forca", x_b, clean_zero(Rb), "Rb")
+            )
+    
+    def _get_shear_at(self, x: float) -> float:
         v = 0.0
         for r in self.reacoes_calculadas:
-            if x >= r["pos"] - 1e-9: v += r["valor"]
+            if x >= r.pos - 1e-9:
+                v += r.valor
         for p in self.cargas_pontuais:
-            if x >= p["pos"] - 1e-9: v += p["valor"]
+            if x >= p.pos - 1e-9:
+                v += p.valor
         for c in self.cargas_distribuidas:
-            if x > c["inicio"] + 1e-9:
-                limite = min(x, c["fim"])
-                s = limite - c["inicio"]
+            if x > c.inicio + 1e-9:
+                limite = min(x, c.fim)
+                s = limite - c.inicio
                 if s > 0:
-                    L_total = c["fim"] - c["inicio"]
-                    t = s / L_total
-                    q_s = c["q_inicial"] + t * (c["q_final"] - c["q_inicial"])
-                    v += s * (c["q_inicial"] + q_s) / 2.0
+                    L_total = c.fim - c.inicio
+                    t = s / L_total if L_total > 0 else 1
+                    q_s = c.q_inicial + t * (c.q_final - c.q_inicial)
+                    v += s * (c.q_inicial + q_s) / 2.0
         return v
-
-    def calcular_esforcos(self, dx=0.01):
+    
+    def calcular_esforcos(self, dx: float = 0.01) -> Dict[str, Any]:
         pontos = [0.0, self.L]
-        for p in self.cargas_pontuais: pontos.append(p["pos"])
-        for m in self.momentos: pontos.append(m["pos"])
-        for c in self.cargas_distribuidas: pontos.extend([c["inicio"], c["fim"]])
-        for r in self.reacoes_calculadas: pontos.append(r["pos"])
-
+        for p in self.cargas_pontuais:
+            pontos.append(p.pos)
+        for m in self.momentos:
+            pontos.append(m.pos)
+        for c in self.cargas_distribuidas:
+            pontos.extend([c.inicio, c.fim])
+        for r in self.reacoes_calculadas:
+            pontos.append(r.pos)
+        
         xs = np.arange(0, self.L + dx, dx)
         xs = np.concatenate((xs, pontos))
         xs = np.round(xs, decimals=5)
         xs = np.unique(xs)
         xs = xs[(xs >= 0) & (xs <= self.L)]
-
+        
         cortante = np.zeros_like(xs)
         momento = np.zeros_like(xs)
-
+        
         for i, x in enumerate(xs):
             cortante[i] = self._get_shear_at(x)
-
+        
         m0 = 0.0
         for mc in self.momentos:
-            if abs(mc["pos"]) < 1e-6: m0 -= mc["valor"]
+            if abs(mc.pos) < 1e-6:
+                m0 -= mc.valor
         for r in self.reacoes_calculadas:
-            if r["tipo"] == "momento" and abs(r["pos"]) < 1e-6: m0 -= r["valor"]
+            if r.tipo == "momento" and abs(r.pos) < 1e-6:
+                m0 -= r.valor
         momento[0] = m0
-
+        
         for i in range(1, len(xs)):
             delta_x = xs[i] - xs[i - 1]
             x_mid = (xs[i - 1] + xs[i]) / 2.0
-            
             v_mid = self._get_shear_at(x_mid)
             m = momento[i - 1] + (v_mid * delta_x)
             
             x0, x1 = xs[i - 1], xs[i]
             for mc in self.momentos:
-                if x0 + 1e-6 < mc["pos"] <= x1 + 1e-6: m -= mc["valor"]
+                if x0 + 1e-6 < mc.pos <= x1 + 1e-6:
+                    m -= mc.valor
             for r in self.reacoes_calculadas:
-                if r["tipo"] == "momento" and x0 + 1e-6 < r["pos"] <= x1 + 1e-6: m -= r["valor"]
+                if r.tipo == "momento" and x0 + 1e-6 < r.pos <= x1 + 1e-6:
+                    m -= r.valor
             
             momento[i] = m
-
+        
         return {
-            "x": xs, "V": cortante, "M": momento,
-            "V_max": clean_zero(np.max(cortante)), "V_min": clean_zero(np.min(cortante)),
-            "M_max": clean_zero(np.max(momento)), "M_min": clean_zero(np.min(momento))
+            "x": xs,
+            "V": cortante,
+            "M": momento,
+            "V_max": clean_zero(np.max(cortante)),
+            "V_min": clean_zero(np.min(cortante)),
+            "M_max": clean_zero(np.max(momento)),
+            "M_min": clean_zero(np.min(momento))
         }
+    
+    def limpar(self):
+        """Limpa todas as cargas e reações."""
+        self.cargas_pontuais.clear()
+        self.cargas_distribuidas.clear()
+        self.momentos.clear()
+        self.reacoes_calculadas.clear()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# RENDERIZADOR DE GRÁFICOS (Adaptado para tema escuro)
+# ══════════════════════════════════════════════════════════════════════════════
+class VigaRenderer:
+    """Renderiza os diagramas de corpo livre, cortante e momento."""
+    
+    def __init__(self, fig, ax_viga, ax_v, ax_m, canvas):
+        self.fig = fig
+        self.ax_viga = ax_viga
+        self.ax_v = ax_v
+        self.ax_m = ax_m
+        self.canvas = canvas
+        
+        # Aplicar tema escuro
+        self.fig.patch.set_facecolor(CORES["bg_canvas"])
+        for ax in (self.ax_viga, self.ax_v, self.ax_m):
+            ax.set_facecolor(CORES["bg_canvas"])
+            ax.tick_params(colors=CORES["text_sec"])
+            ax.xaxis.label.set_color(CORES["text_sec"])
+            ax.yaxis.label.set_color(CORES["text_sec"])
+            for spine in ax.spines.values():
+                spine.set_color(CORES["border"])
+        
+        self._configurar_eixos_base()
+        self.renderizar_empty_state()
+    
+    def _configurar_eixos_base(self):
+        for ax in (self.ax_v, self.ax_m):
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+    
+    def renderizar_empty_state(self):
+        for ax in (self.ax_viga, self.ax_v, self.ax_m):
+            ax.clear()
+            ax.axis('off')
+            ax.set_facecolor(CORES["bg_canvas"])
+        
+        self.ax_viga.text(
+            0.5, 0.5,
+            "Configure a geometria e adicione as cargas\npara visualizar os diagramas da viga.",
+            ha='center', va='center', fontsize=_fs(10),
+            color=CORES["text_muted"], style='italic'
+        )
+        self.canvas.draw()
+    
+    def renderizar_esquema(self, L, tipo_apoio, xa, xb, cargas):
+        self.ax_viga.clear()
+        self.ax_viga.set_facecolor(CORES["bg_canvas"])
+        self.ax_viga.set_title(
+            "Diagrama de Corpo Livre",
+            fontweight='bold', color=CORES["text_pri"], pad=_px(8), fontsize=_fs(10)
+        )
+        self.ax_viga.set_xlim(-0.5, L + 0.5)
+        self.ax_viga.set_ylim(-2.5, 2.5)
+        self.ax_viga.axis('off')
+        
+        # Viga
+        self.ax_viga.plot([0, L], [0, 0], color='#64748b', linewidth=8, zorder=2)
+        
+        # Apoios
+        if tipo_apoio == 'engaste':
+            rect = patches.Rectangle(
+                (xa - 0.2, -0.6), 0.4, 1.2,
+                linewidth=1, edgecolor=CORES["text_sec"],
+                facecolor='#475569', hatch='///'
+            )
+            self.ax_viga.add_patch(rect)
+        else:
+            # Pino
+            pino = patches.Polygon(
+                [[xa, 0], [xa - 0.2, -0.4], [xa + 0.2, -0.4]],
+                closed=True, color='#3b82f6', zorder=3
+            )
+            self.ax_viga.add_patch(pino)
+            self.ax_viga.plot(
+                [xa - 0.3, xa + 0.3], [-0.4, -0.4],
+                color=CORES["text_sec"], lw=2
+            )
+            
+            # Rolete
+            rolete = patches.Polygon(
+                [[xb, 0], [xb - 0.2, -0.3], [xb + 0.2, -0.3]],
+                closed=True, color='#3b82f6', zorder=3
+            )
+            self.ax_viga.add_patch(rolete)
+            self.ax_viga.plot(
+                [xb - 0.2, xb + 0.2], [-0.4, -0.4],
+                color=CORES["text_sec"], lw=2
+            )
+            for offset in [-0.1, 0.1]:
+                self.ax_viga.plot(xb + offset, -0.35, 'o', color=CORES["text_sec"], markersize=3)
+        
+        # Cargas
+        for c in cargas:
+            if c.get("tipo") == "pontual":
+                cor = CORES["carga_pontual"] if c["val"] < 0 else CORES["success"]
+                y_text = 1.5 if c["val"] < 0 else -1.5
+                self.ax_viga.annotate(
+                    '', xy=(c["pos"], 0), xytext=(c["pos"], y_text),
+                    arrowprops=dict(facecolor=cor, edgecolor=cor, width=2.5, headwidth=9),
+                    zorder=4
+                )
+                self.ax_viga.text(
+                    c["pos"],
+                    y_text + (0.2 if c["val"] < 0 else -0.4),
+                    f"{abs(c['val']):.1f} N",
+                    ha='center', fontweight='bold', color=cor
+                )
+            
+            elif c.get("tipo") == "momento":
+                marker = r'$\circlearrowleft$' if c["val"] > 0 else r'$\circlearrowright$'
+                self.ax_viga.plot(
+                    c["pos"], 0.8, marker=marker,
+                    markersize=22, color=CORES["carga_momento"]
+                )
+                self.ax_viga.text(
+                    c["pos"], 1.4, f"{abs(c['val']):.1f} Nm",
+                    ha='center', color=CORES["carga_momento"], fontweight='bold'
+                )
+            
+            elif c.get("tipo") == "distrib":
+                qi, qf = c["qi"], c["qf"]
+                xi, xf = c["xi"], c["xf"]
+                is_downward = (qi + qf) <= 0
+                max_q = max(abs(qi), abs(qf))
+                max_q = max_q if max_q != 0 else 1
+                
+                sign_y = 1 if is_downward else -1
+                y_i = sign_y * (abs(qi) / max_q) * 1.2
+                y_f = sign_y * (abs(qf) / max_q) * 1.2
+                
+                cor_poligono = CORES["carga_pontual"] if is_downward else CORES["success"]
+                poly = patches.Polygon(
+                    [[xi, 0], [xi, y_i], [xf, y_f], [xf, 0]],
+                    closed=True, color=cor_poligono, alpha=0.2, zorder=1
+                )
+                self.ax_viga.add_patch(poly)
+                
+                n_arrows = max(3, int((xf - xi) * 2))
+                for x_seta in np.linspace(xi, xf, n_arrows):
+                    t = (x_seta - xi) / (xf - xi) if xf != xi else 0
+                    y_seta = y_i + t * (y_f - y_i)
+                    self.ax_viga.annotate(
+                        '', xy=(x_seta, 0), xytext=(x_seta, y_seta),
+                        arrowprops=dict(
+                            arrowstyle="->", color=cor_poligono,
+                            alpha=0.7, lw=1.5
+                        )
+                    )
+    
+    def renderizar_diagramas(self, res, L):
+        x, V, M = res["x"], res["V"], res["M"]
+        
+        # --- Cortante ---
+        self.ax_v.clear()
+        self.ax_v.set_facecolor(CORES["bg_canvas"])
+        self.ax_v.axis('on')
+        self._configurar_eixos_base()
+        
+        self.ax_v.set_title(
+            "Diagrama de Força Cortante (V)",
+            fontweight='bold', fontsize=_fs(10), color=CORES["text_pri"], pad=_px(10)
+        )
+        self.ax_v.set_ylabel("V [N]", fontsize=_fs(9), fontweight='bold', color=CORES["text_sec"])
+        self.ax_v.set_xlim(0, L)
+        self.ax_v.margins(y=0.25)
+        
+        self.ax_v.plot(x, V, color=CORES["text_pri"], linewidth=2)
+        self.ax_v.fill_between(x, 0, V, where=(V >= 0), color='#3b82f6', alpha=0.3, interpolate=True)
+        self.ax_v.fill_between(x, 0, V, where=(V < 0), color=CORES["danger"], alpha=0.3, interpolate=True)
+        self.ax_v.axhline(0, color=CORES["border"], linewidth=1.2)
+        self.ax_v.grid(True, linestyle=':', alpha=0.4, color=CORES["border"])
+        self.ax_v.tick_params(colors=CORES["text_sec"])
+        
+        v_max, v_min = res["V_max"], res["V_min"]
+        if abs(v_max) > 1e-5:
+            idx_max = np.argmax(V)
+            self.ax_v.annotate(
+                f"{v_max:.2f}", xy=(x[idx_max], v_max),
+                xytext=(0, 5), textcoords='offset points',
+                ha='center', va='bottom', fontsize=_fs(8),
+                fontweight='bold', color='#93c5fd'
+            )
+        if abs(v_min) > 1e-5:
+            idx_min = np.argmin(V)
+            self.ax_v.annotate(
+                f"{v_min:.2f}", xy=(x[idx_min], v_min),
+                xytext=(0, -5), textcoords='offset points',
+                ha='center', va='top', fontsize=_fs(8),
+                fontweight='bold', color='#fca5a5'
+            )
+        
+        # --- Momento ---
+        self.ax_m.clear()
+        self.ax_m.set_facecolor(CORES["bg_canvas"])
+        self.ax_m.axis('on')
+        self._configurar_eixos_base()
+        
+        self.ax_m.set_title(
+            "Diagrama de Momento Fletor (M)",
+            fontweight='bold', fontsize=_fs(10), color=CORES["text_pri"], pad=_px(10)
+        )
+        self.ax_m.set_ylabel("M [N.m]", fontsize=_fs(9), fontweight='bold', color=CORES["text_sec"])
+        self.ax_m.set_xlabel("Posição x [m]", fontweight='bold', fontsize=_fs(9), color=CORES["text_sec"])
+        self.ax_m.set_xlim(0, L)
+        self.ax_m.margins(y=0.25)
+        
+        self.ax_m.plot(x, M, color=CORES["text_pri"], linewidth=2)
+        self.ax_m.fill_between(x, 0, M, where=(M >= 0), color=CORES["success"], alpha=0.3, interpolate=True)
+        self.ax_m.fill_between(x, 0, M, where=(M < 0), color='#f97316', alpha=0.3, interpolate=True)
+        self.ax_m.axhline(0, color=CORES["border"], linewidth=1.2)
+        self.ax_m.invert_yaxis()
+        self.ax_m.grid(True, linestyle=':', alpha=0.4, color=CORES["border"])
+        self.ax_m.tick_params(colors=CORES["text_sec"])
+        
+        m_max, m_min = res["M_max"], res["M_min"]
+        if abs(m_max) > 1e-5:
+            idx_m_max = np.argmax(M)
+            self.ax_m.annotate(
+                f"{m_max:.2f}", xy=(x[idx_m_max], m_max),
+                xytext=(0, -6), textcoords='offset points',
+                ha='center', va='top', fontsize=_fs(8),
+                fontweight='bold', color='#86efac'
+            )
+        if abs(m_min) > 1e-5:
+            idx_m_min = np.argmin(M)
+            self.ax_m.annotate(
+                f"{m_min:.2f}", xy=(x[idx_m_min], m_min),
+                xytext=(0, 6), textcoords='offset points',
+                ha='center', va='bottom', fontsize=_fs(8),
+                fontweight='bold', color='#fdba74'
+            )
+        
+        self.fig.tight_layout(pad=2.0)
+        self.canvas.draw()
 
-# ==========================================================
-# 2. MODAL DE CARREGAMENTOS (UI isolada)
-# ==========================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# MODAL DE NOVA CARGA (Adaptado para tema escuro)
+# ══════════════════════════════════════════════════════════════════════════════
 class ModalNovaCarga(tk.Toplevel):
-    def __init__(self, parent, theme, L_max, callback_salvar):
+    """Janela modal para adicionar cargas."""
+    
+    def __init__(self, parent, L_max, callback_salvar):
         super().__init__(parent)
-        self.theme = theme
         self.L_max = L_max
         self.callback = callback_salvar
-
+        
         self.title("Adicionar Nova Carga")
-        self.geometry("450x380")
-        self.configure(bg=self.theme["bg_panel"])
-
+        modal_w, modal_h = _px(420), _px(380)
+        self.geometry(f"{modal_w}x{modal_h}")
+        self.configure(bg=CORES["bg_panel"])
+        
         self.transient(parent)
         self.grab_set()
         self.resizable(False, False)
-
-        self._drag_data = {"x": 0, "y": 0}
-        self.bind("<ButtonPress-1>", self._iniciar_arrasto)
-        self.bind("<B1-Motion>", self._arrastar_janela)
-
+        
         self._build_ui()
         self._centralizar_no_parent(parent)
-
+    
     def _centralizar_no_parent(self, parent):
         self.update_idletasks()
         w, h = self.winfo_width(), self.winfo_height()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (w // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (h // 2)
         self.geometry(f"+{x}+{y}")
-
-    def _iniciar_arrasto(self, event):
-        if isinstance(event.widget, (ttk.Entry, ttk.Combobox, ttk.Button)): return
-        self._drag_data["x"] = event.x_root
-        self._drag_data["y"] = event.y_root
-
-    def _arrastar_janela(self, event):
-        if isinstance(event.widget, (ttk.Entry, ttk.Combobox, ttk.Button)): return
-        deltax = event.x_root - self._drag_data["x"]
-        deltay = event.y_root - self._drag_data["y"]
-        x = self.winfo_x() + deltax
-        y = self.winfo_y() + deltay
-        self.geometry(f"+{x}+{y}")
-        self._drag_data["x"] = event.x_root
-        self._drag_data["y"] = event.y_root
-
+    
     def _build_ui(self):
-        f_main = ttk.Frame(self, padding=25, style="Panel.TFrame")
+        # Título
+        header = tk.Frame(self, bg=CORES["bg_sidebar"])
+        header.pack(fill=tk.X)
+        tk.Label(
+            header, text="⚡ Configuração de Carga",
+            bg=CORES["bg_sidebar"], fg=CORES["primary"],
+            font=FONT_HEADING, padx=_px(16), pady=_px(9)
+        ).pack(anchor=tk.W)
+        
+        f_main = tk.Frame(self, bg=CORES["bg_panel"], padx=_px(20), pady=_px(15))
         f_main.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Label(f_main, text="Configuração de Carga", font=self.theme["font_title"], foreground=self.theme["primary"]).pack(anchor=tk.W, pady=(0, 15))
-        ttk.Label(f_main, text="Selecione o tipo de carregamento:").pack(anchor=tk.W, pady=(0, 5))
-
+        
+        tk.Label(
+            f_main, text="Tipo de carregamento:",
+            bg=CORES["bg_panel"], fg=CORES["text_sec"],
+            font=FONT_BODY
+        ).pack(anchor=tk.W, pady=(0, 8))
+        
         self.var_tipo = tk.StringVar(value="Pontual (Força)")
-        cb = ttk.Combobox(f_main, textvariable=self.var_tipo,
-                          values=["Pontual (Força)", "Momento Concentrado", "Distribuída Constante", "Distribuída Linear"],
-                          state="readonly", font=self.theme["font_body"])
+        cb = DarkCombobox(
+            f_main, textvariable=self.var_tipo,
+            values=[
+                "Pontual (Força)",
+                "Momento Concentrado",
+                "Distribuída Constante",
+                "Distribuída Linear"
+            ]
+        )
         cb.pack(fill=tk.X, pady=(0, 15))
-
-        self.f_inputs = ttk.Frame(f_main, style="Panel.TFrame")
+        
+        self.f_inputs = tk.Frame(f_main, bg=CORES["bg_panel"])
         self.f_inputs.pack(fill=tk.BOTH, expand=True)
-        self.f_inputs.columnconfigure(1, weight=1)
-
+        
         self.var_tipo.trace_add("write", self._atualizar_campos)
         cb.current(0)
-
-        f_botoes = ttk.Frame(f_main, style="Panel.TFrame")
+        
+        # Botões
+        f_botoes = tk.Frame(f_main, bg=CORES["bg_panel"])
         f_botoes.pack(fill=tk.X, pady=(20, 0))
-
-        btn_cancelar = ttk.Button(f_botoes, text="Cancelar", command=self.destroy)
+        
+        btn_cancelar = DarkButton(
+            f_botoes, text="Cancelar",
+            bg=CORES["bg_sidebar"], fg=CORES["text_sec"],
+            command=self.destroy
+        )
         btn_cancelar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        btn_cancelar.config(cursor="hand2")
-
-        btn_salvar = ttk.Button(f_botoes, text="✔ Confirmar", style="Acao.TButton", command=self._validar_e_salvar)
+        
+        btn_salvar = DarkButton(
+            f_botoes, text="✔ Confirmar",
+            bg=CORES["success"], command=self._validar_e_salvar
+        )
         btn_salvar.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
-        btn_salvar.config(cursor="hand2")
-
+    
+    def _criar_entry(self, parent):
+        entry = DarkEntry(parent)
+        return entry
+    
     def _atualizar_campos(self, *args):
-        for w in self.f_inputs.winfo_children(): w.destroy()
-
+        for w in self.f_inputs.winfo_children():
+            w.destroy()
+        
         tipo = self.var_tipo.get()
+        
         if tipo in ["Pontual (Força)", "Momento Concentrado"]:
             lbl_u = "N" if tipo == "Pontual (Força)" else "N.m"
             instrucao = "[- p/ Baixo]" if tipo == "Pontual (Força)" else "[- p/ Horário]"
-
-            ttk.Label(self.f_inputs, text=f"Intensidade ({lbl_u})\n{instrucao}:", justify=tk.LEFT).grid(row=0, column=0, sticky=tk.W, pady=8)
-            ent_val = ttk.Entry(self.f_inputs, justify="center", font=self.theme["font_body"])
+            
+            tk.Label(self.f_inputs, text=f"Intensidade ({lbl_u})\n{instrucao}:",
+                     bg=CORES["bg_panel"], fg=CORES["text_sec"], justify=tk.LEFT,
+                     font=FONT_SMALL).grid(row=0, column=0, sticky=tk.W, pady=8)
+            ent_val = self._criar_entry(self.f_inputs)
             ent_val.grid(row=0, column=1, sticky="ew", pady=8, padx=(10, 0))
-
-            ttk.Label(self.f_inputs, text="Posição x [m]:").grid(row=1, column=0, sticky=tk.W, pady=8)
-            ent_pos = ttk.Entry(self.f_inputs, justify="center", font=self.theme["font_body"])
+            
+            tk.Label(self.f_inputs, text="Posição x [m]:",
+                     bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_SMALL
+                     ).grid(row=1, column=0, sticky=tk.W, pady=8)
+            ent_pos = self._criar_entry(self.f_inputs)
             ent_pos.grid(row=1, column=1, sticky="ew", pady=8, padx=(10, 0))
-
+            
             self.f_inputs.entries = {"val": ent_val, "pos": ent_pos}
-
+            self.f_inputs.columnconfigure(1, weight=1)
+        
         else:
-            ttk.Label(self.f_inputs, text="Intens. Início [N/m]\n[- p/ Baixo]:", justify=tk.LEFT).grid(row=0, column=0, sticky=tk.W, pady=5)
-            ent_qi = ttk.Entry(self.f_inputs, justify="center", font=self.theme["font_body"])
+            tk.Label(self.f_inputs, text="Intens. Início [N/m]\n[- p/ Baixo]:",
+                     bg=CORES["bg_panel"], fg=CORES["text_sec"], justify=tk.LEFT,
+                     font=FONT_SMALL).grid(row=0, column=0, sticky=tk.W, pady=5)
+            ent_qi = self._criar_entry(self.f_inputs)
             ent_qi.grid(row=0, column=1, sticky="ew", pady=5, padx=(10, 0))
-
+            
             ent_qf = None
             if tipo == "Distribuída Linear":
-                ttk.Label(self.f_inputs, text="Intens. Final [N/m]:").grid(row=1, column=0, sticky=tk.W, pady=5)
-                ent_qf = ttk.Entry(self.f_inputs, justify="center", font=self.theme["font_body"])
+                tk.Label(self.f_inputs, text="Intens. Final [N/m]:",
+                         bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_SMALL
+                         ).grid(row=1, column=0, sticky=tk.W, pady=5)
+                ent_qf = self._criar_entry(self.f_inputs)
                 ent_qf.grid(row=1, column=1, sticky="ew", pady=5, padx=(10, 0))
-
+            
             r_offset = 2 if tipo == "Distribuída Linear" else 1
-            ttk.Label(self.f_inputs, text="Posição Inicial x [m]:").grid(row=r_offset, column=0, sticky=tk.W, pady=5)
-            ent_xi = ttk.Entry(self.f_inputs, justify="center", font=self.theme["font_body"])
+            
+            tk.Label(self.f_inputs, text="Posição Inicial x [m]:",
+                     bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_SMALL
+                     ).grid(row=r_offset, column=0, sticky=tk.W, pady=5)
+            ent_xi = self._criar_entry(self.f_inputs)
             ent_xi.grid(row=r_offset, column=1, sticky="ew", pady=5, padx=(10, 0))
-
-            ttk.Label(self.f_inputs, text="Posição Final x [m]:").grid(row=r_offset + 1, column=0, sticky=tk.W, pady=5)
-            ent_xf = ttk.Entry(self.f_inputs, justify="center", font=self.theme["font_body"])
+            
+            tk.Label(self.f_inputs, text="Posição Final x [m]:",
+                     bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_SMALL
+                     ).grid(row=r_offset + 1, column=0, sticky=tk.W, pady=5)
+            ent_xf = self._criar_entry(self.f_inputs)
             ent_xf.grid(row=r_offset + 1, column=1, sticky="ew", pady=5, padx=(10, 0))
-
-            self.f_inputs.entries = {"qi": ent_qi, "qf": ent_qf, "xi": ent_xi, "xf": ent_xf}
-
+            
+            self.f_inputs.entries = {
+                "qi": ent_qi, "qf": ent_qf, "xi": ent_xi, "xf": ent_xf
+            }
+            self.f_inputs.columnconfigure(1, weight=1)
+    
     def _validar_e_salvar(self):
         tipo = self.var_tipo.get()
         try:
             dados = {"tipo_str": tipo}
-
-            if tipo == "Pontual (Força)" or tipo == "Momento Concentrado":
+            
+            if tipo in ["Pontual (Força)", "Momento Concentrado"]:
                 pos = parse_float(self.f_inputs.entries["pos"].get())
-                if not (0 <= pos <= self.L_max): raise ValueError(f"Posição fora da viga (0 a {self.L_max} m)")
+                if not (0 <= pos <= self.L_max):
+                    raise ValueError(f"Posição fora da viga (0 a {self.L_max} m)")
+                
                 dados.update({
                     "tipo": "pontual" if tipo == "Pontual (Força)" else "momento",
                     "val": parse_float(self.f_inputs.entries["val"].get()),
@@ -278,261 +746,151 @@ class ModalNovaCarga(tk.Toplevel):
                 })
             else:
                 qi = parse_float(self.f_inputs.entries["qi"].get())
-                qf = parse_float(self.f_inputs.entries["qf"].get()) if tipo == "Distribuída Linear" else qi
+                qf = parse_float(
+                    self.f_inputs.entries["qf"].get()
+                ) if tipo == "Distribuída Linear" else qi
                 xi = parse_float(self.f_inputs.entries["xi"].get())
                 xf = parse_float(self.f_inputs.entries["xf"].get())
-                if not (0 <= xi < xf <= self.L_max): raise ValueError(f"Intervalo de x inválido (limites 0 a {self.L_max} m).")
-                dados.update({"tipo": "distrib", "qi": qi, "qf": qf, "xi": xi, "xf": xf})
-
+                
+                if not (0 <= xi < xf <= self.L_max):
+                    raise ValueError(f"Intervalo de x inválido (limites 0 a {self.L_max} m).")
+                
+                dados.update({
+                    "tipo": "distrib", "qi": qi, "qf": qf, "xi": xi, "xf": xf
+                })
+            
             self.callback(dados)
             self.destroy()
+        
         except ValueError as e:
-            msg = str(e) if "Posição" in str(e) or "Intervalo" in str(e) else "Insira apenas números (use vírgula ou ponto)."
+            msg = str(e) if "Posição" in str(e) or "Intervalo" in str(e) else \
+                  "Insira apenas números (use vírgula ou ponto)."
             DialogoErro(self, "Dados Inválidos", msg)
 
-
-# ==========================================================
-# 3. RENDERIZADOR (Gráficos Turbinados)
-# ==========================================================
-class VigaRenderer:
-    def __init__(self, fig, ax_viga, ax_v, ax_m, canvas):
-        self.fig = fig
-        self.ax_viga = ax_viga
-        self.ax_v = ax_v
-        self.ax_m = ax_m
-        self.canvas = canvas
-        self._configurar_eixos_base()
-
-    def _configurar_eixos_base(self):
-        """Remove bordas superiores e direitas para design mais limpo"""
-        for ax in (self.ax_v, self.ax_m):
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-
-    def renderizar_empty_state(self):
-        for ax in (self.ax_viga, self.ax_v, self.ax_m):
-            ax.clear()
-            ax.axis('off')
-        self.ax_viga.text(0.5, 0.5, "Configure a geometria e adicione as cargas\npara visualizar os diagramas da viga.", 
-                          ha='center', va='center', fontsize=12, color='#7f8c8d', style='italic')
-        self.canvas.draw()
-
-    def renderizar_esquema(self, L, tipo_apoio, xa, xb, cargas):
-        self.ax_viga.clear()
-        self.ax_viga.set_title("Diagrama de Corpo Livre", fontweight='bold', color="#2c3e50")
-        self.ax_viga.set_xlim(-0.5, L + 0.5)
-        self.ax_viga.set_ylim(-2.5, 2.5)
-        self.ax_viga.axis('off')
-
-        self.ax_viga.plot([0, L], [0, 0], color='#34495e', linewidth=8, zorder=2)
-
-        # APOIOS
-        if tipo_apoio == 'engaste':
-            rect = patches.Rectangle((xa - 0.2, -0.6), 0.4, 1.2, linewidth=1, edgecolor='black', facecolor='#95a5a6', hatch='///')
-            self.ax_viga.add_patch(rect)
-        else:
-            pino = patches.Polygon([[xa, 0], [xa - 0.2, -0.4], [xa + 0.2, -0.4]], closed=True, color='#2980b9', zorder=3)
-            self.ax_viga.add_patch(pino)
-            self.ax_viga.plot([xa - 0.3, xa + 0.3], [-0.4, -0.4], 'k-', lw=2)
-            rolete = patches.Polygon([[xb, 0], [xb - 0.2, -0.3], [xb + 0.2, -0.3]], closed=True, color='#2980b9', zorder=3)
-            self.ax_viga.add_patch(rolete)
-            self.ax_viga.plot([xb - 0.2, xb + 0.2], [-0.4, -0.4], 'k-', lw=2)
-            self.ax_viga.plot(xb - 0.1, -0.35, 'ko', markersize=4)
-            self.ax_viga.plot(xb + 0.1, -0.35, 'ko', markersize=4)
-
-        # CARGAS
-        for c in cargas:
-            if c["tipo"] == "pontual":
-                cor = '#e74c3c' if c["val"] < 0 else '#27ae60'
-                y_text = 1.5 if c["val"] < 0 else -1.5
-                self.ax_viga.annotate('', xy=(c["pos"], 0), xytext=(c["pos"], y_text),
-                                      arrowprops=dict(facecolor=cor, edgecolor=cor, width=2.5, headwidth=9), zorder=4)
-                self.ax_viga.text(c["pos"], y_text + (0.2 if c["val"] < 0 else -0.4),
-                                  f"{abs(c['val']):.1f} N", ha='center', fontweight='bold', color=cor)
-
-            elif c["tipo"] == "momento":
-                marker = r'$\circlearrowleft$' if c["val"] > 0 else r'$\circlearrowright$'
-                self.ax_viga.plot(c["pos"], 0.8, marker=marker, markersize=22, color='#f39c12')
-                self.ax_viga.text(c["pos"], 1.4, f"{abs(c['val']):.1f} Nm", ha='center', color='#d35400', fontweight='bold')
-
-            elif c["tipo"] == "distrib":
-                is_downward = (c["qi"] + c["qf"]) <= 0
-                max_q = max(abs(c["qi"]), abs(c["qf"]))
-                max_q = max_q if max_q != 0 else 1
-                
-                sign_y = 1 if is_downward else -1
-                y_i = sign_y * (abs(c["qi"]) / max_q) * 1.2
-                y_f = sign_y * (abs(c["qf"]) / max_q) * 1.2
-
-                cor_poligono = '#e74c3c' if is_downward else '#27ae60'
-                poly = patches.Polygon([[c["xi"], 0], [c["xi"], y_i], [c["xf"], y_f], [c["xf"], 0]],
-                                       closed=True, color=cor_poligono, alpha=0.15, zorder=1)
-                self.ax_viga.add_patch(poly)
-
-                n_arrows = max(3, int((c["xf"] - c["xi"]) * 2))
-                for x_seta in np.linspace(c["xi"], c["xf"], n_arrows):
-                    t = (x_seta - c["xi"]) / (c["xf"] - c["xi"]) if c["xf"] != c["xi"] else 0
-                    y_seta = y_i + t * (y_f - y_i)
-                    self.ax_viga.annotate('', xy=(x_seta, 0), xytext=(x_seta, y_seta),
-                                          arrowprops=dict(arrowstyle="->", color=cor_poligono, alpha=0.8, lw=1.5))
-
-    def renderizar_diagramas(self, res):
-        L = res["x"][-1]
-        
-        # --- CORTANTE (V) ---
-        self.ax_v.clear()
-        self.ax_v.axis('on')
-        self._configurar_eixos_base()
-        
-        self.ax_v.set_title("Diagrama de Força Cortante (V)", fontweight='bold', fontsize=11, color="#2c3e50", pad=15)
-        self.ax_v.set_ylabel("V [N]", fontsize=10, fontweight='bold', color="#34495e")
-        self.ax_v.set_xlim(0, L)
-        self.ax_v.margins(y=0.25) # Padding automático para caber os textos
-
-        x, V = res["x"], res["V"]
-        self.ax_v.plot(x, V, color='#2c3e50', linewidth=2)
-        # Dual Color Fill
-        self.ax_v.fill_between(x, 0, V, where=(V >= 0), color='#3498db', alpha=0.35, interpolate=True)
-        self.ax_v.fill_between(x, 0, V, where=(V < 0), color='#e74c3c', alpha=0.35, interpolate=True)
-        self.ax_v.axhline(0, color='black', linewidth=1.2)
-        self.ax_v.grid(True, linestyle=':', alpha=0.6)
-
-        # Anotações Inteligentes (Picos Cortante)
-        v_max, v_min = res["V_max"], res["V_min"]
-        if abs(v_max) > 1e-5:
-            idx_max = np.argmax(V)
-            self.ax_v.annotate(f"{v_max:.2f}", xy=(x[idx_max], v_max), xytext=(0, 6), textcoords='offset points', 
-                               ha='center', va='bottom', fontsize=9, fontweight='bold', color='#2980b9')
-        if abs(v_min) > 1e-5:
-            idx_min = np.argmin(V)
-            self.ax_v.annotate(f"{v_min:.2f}", xy=(x[idx_min], v_min), xytext=(0, -6), textcoords='offset points', 
-                               ha='center', va='top', fontsize=9, fontweight='bold', color='#c0392b')
-
-        # --- MOMENTO (M) ---
-        self.ax_m.clear()
-        self.ax_m.axis('on')
-        self._configurar_eixos_base()
-
-        self.ax_m.set_title("Diagrama de Momento Fletor (M)", fontweight='bold', fontsize=11, color="#2c3e50", pad=15)
-        self.ax_m.set_ylabel("M [N.m]", fontsize=10, fontweight='bold', color="#34495e")
-        self.ax_m.set_xlabel("Posição x [m]", fontweight='bold', fontsize=10)
-        self.ax_m.set_xlim(0, L)
-        self.ax_m.margins(y=0.25)
-
-        M = res["M"]
-        self.ax_m.plot(x, M, color='#2c3e50', linewidth=2)
-        # Dual Color Fill
-        self.ax_m.fill_between(x, 0, M, where=(M >= 0), color='#27ae60', alpha=0.35, interpolate=True)
-        self.ax_m.fill_between(x, 0, M, where=(M < 0), color='#d35400', alpha=0.35, interpolate=True)
-        self.ax_m.axhline(0, color='black', linewidth=1.2)
-        self.ax_m.invert_yaxis() # Padrão Resistência dos Materiais (Positivo p/ baixo)
-        self.ax_m.grid(True, linestyle=':', alpha=0.6)
-
-        # Anotações Inteligentes (Picos Fletor invertido)
-        m_max, m_min = res["M_max"], res["M_min"]
-        if abs(m_max) > 1e-5:
-            idx_m_max = np.argmax(M)
-            # m_max é desenhado para baixo visualmente, então o texto fica embaixo (top alignment, negative y offset)
-            self.ax_m.annotate(f"{m_max:.2f}", xy=(x[idx_m_max], m_max), xytext=(0, -6), textcoords='offset points', 
-                               ha='center', va='top', fontsize=9, fontweight='bold', color='#27ae60')
-        if abs(m_min) > 1e-5:
-            idx_m_min = np.argmin(M)
-            # m_min é desenhado para cima visualmente
-            self.ax_m.annotate(f"{m_min:.2f}", xy=(x[idx_m_min], m_min), xytext=(0, 6), textcoords='offset points', 
-                               ha='center', va='bottom', fontsize=9, fontweight='bold', color='#d35400')
-
-        self.fig.tight_layout(pad=3.0)
-        self.canvas.draw()
-
-
-# ==========================================================
-# 4. JANELA DE ERRO PROFISSIONAL
-# ==========================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# DIÁLOGO DE ERRO (Adaptado)
+# ══════════════════════════════════════════════════════════════════════════════
 class DialogoErro(tk.Toplevel):
     def __init__(self, parent, titulo, mensagem, detalhes=None):
         super().__init__(parent)
         self.title("Aviso do Sistema")
-        self.configure(bg="#ffffff")
+        self.configure(bg=CORES["bg_panel"])
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
-
-        header = tk.Frame(self, bg="#D13438", height=50)
+        
+        # Header
+        header = tk.Frame(self, bg=CORES["danger"], height=50)
         header.pack(fill=tk.X)
-        icon_label = tk.Label(header, text="⚠", font=("Segoe UI", 24), fg="white", bg="#D13438")
-        icon_label.pack(side=tk.LEFT, padx=15)
-        titulo_label = tk.Label(header, text=titulo, font=("Segoe UI", 12, "bold"), fg="white", bg="#D13438")
-        titulo_label.pack(side=tk.LEFT, pady=10)
-
-        corpo = tk.Frame(self, bg="#ffffff", padx=25, pady=20)
+        header.pack_propagate(False)
+        
+        tk.Label(
+            header, text="⚠", font=("Segoe UI", 24),
+            fg="white", bg=CORES["danger"]
+        ).pack(side=tk.LEFT, padx=15)
+        tk.Label(
+            header, text=titulo,
+            font=("Segoe UI", 12, "bold"),
+            fg="white", bg=CORES["danger"]
+        ).pack(side=tk.LEFT, pady=10)
+        
+        corpo = tk.Frame(self, bg=CORES["bg_panel"], padx=25, pady=20)
         corpo.pack(fill=tk.BOTH, expand=True)
-        msg_label = tk.Label(corpo, text=mensagem, font=("Segoe UI", 10), bg="#ffffff", wraplength=380, justify=tk.LEFT)
-        msg_label.pack(anchor=tk.W)
-
+        
+        tk.Label(
+            corpo, text=mensagem, font=FONT_BODY,
+            bg=CORES["bg_panel"], fg=CORES["text_pri"],
+            wraplength=380, justify=tk.LEFT
+        ).pack(anchor=tk.W)
+        
         if detalhes:
             self.var_det = tk.BooleanVar(value=False)
-            chk = ttk.Checkbutton(corpo, text="Mostrar relatório técnico", variable=self.var_det, command=self._alternar_detalhes)
-            chk.pack(anchor=tk.W, pady=(10, 0))
-            self.txt_det = tk.Text(corpo, height=6, font=("Consolas", 9), wrap=tk.WORD, state=tk.DISABLED)
-            self.txt_det.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-            self.txt_det.configure(state=tk.NORMAL)
+            ttk.Checkbutton(
+                corpo, text="Mostrar relatório técnico",
+                variable=self.var_det, command=self._alternar_detalhes
+            ).pack(anchor=tk.W, pady=(10, 0))
+            
+            self.txt_det = tk.Text(
+                corpo, height=6, font=("Consolas", 9),
+                wrap=tk.WORD, bg=CORES["bg_canvas"],
+                fg=CORES["text_sec"]
+            )
             self.txt_det.insert("1.0", detalhes)
-            self.txt_det.configure(state=tk.DISABLED)
+            self.txt_det.config(state=tk.DISABLED)
             self._alternar_detalhes()
-
-        botoes = tk.Frame(self, bg="#f0f0f0", padx=10, pady=10)
+        
+        botoes = tk.Frame(self, bg=CORES["bg_sidebar"], padx=10, pady=10)
         botoes.pack(fill=tk.X)
-        ok_btn = ttk.Button(botoes, text="OK", command=self.destroy, style="Acao.TButton")
-        ok_btn.pack(side=tk.RIGHT)
-        ok_btn.config(cursor="hand2")
-
+        DarkButton(botoes, text="OK", command=self.destroy).pack(side=tk.RIGHT)
+        
         self._centralizar(parent)
-
+    
     def _centralizar(self, parent):
         self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
+        w, h = self.winfo_width(), self.winfo_height()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (w // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (h // 2)
         self.geometry(f"+{x}+{y}")
-
+    
     def _alternar_detalhes(self):
         if self.var_det.get():
             self.txt_det.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         else:
             self.txt_det.pack_forget()
 
-
-# ==========================================================
-# 5. APP PRINCIPAL (Controller nativo OS)
-# ==========================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# APLICAÇÃO PRINCIPAL
+# ══════════════════════════════════════════════════════════════════════════════
 class VigaApp(tk.Tk):
+    """Aplicação principal de análise estrutural."""
+    
     def __init__(self):
         super().__init__()
+        
+        self.title("⬡ Análise Estrutural - Viga")
 
-        self.theme = {
-            "bg_main": "#eef2f5",
-            "bg_panel": "#ffffff",
-            "primary": "#005A9E",
-            "danger": "#D13438",
-            "text": "#333333",
-            "font_title": ("Segoe UI", 11, "bold"),
-            "font_body": ("Segoe UI", 10),
-            "font_mono": ("Consolas", 10)
-        }
+        # Detectar resolução e adaptar janela
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        if sw >= 1920:
+            win_w, win_h = 1450, 850
+            self.minsize(1200, 680)
+        elif sw >= 1280:
+            win_w, win_h = min(1280, sw - 40), min(720, sh - 60)
+            self.minsize(900, 580)
+        else:
+            win_w, win_h = min(1100, sw - 20), min(660, sh - 40)
+            self.minsize(800, 520)
 
-        self.title("Software de Análise Estrutural")
-        self.geometry("1450x850")
-        self.configure(bg=self.theme["bg_main"])
-
-        self.cargas_adicionadas = []
-
-        self._configurar_estilos()
+        # Centralizar janela na tela
+        x = (sw - win_w) // 2
+        y = (sh - win_h) // 2
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.configure(bg=CORES["bg_main"])
+        
+        # Estado da aplicação
+        self.cargas_adicionadas: List[Dict] = []
+        self.comprimento_viga = 10.0
+        self.tipo_apoio = "simples"
+        self.pos_apoio_a = 0.0
+        self.pos_apoio_b = 10.0
+        self.resultados = None
+        
+        # Inicializar referências (serão preenchidas depois)
+        self.sidebar_buttons = {}
+        self.result_labels = {}
+        self.panel_body = None
+        self.panel_title = None
+        self.config_panel = None
+        self.tree_cargas = None
+        self.status_label = None
+        
+        # Construir UI
         self._build_ui()
-        self.renderer.renderizar_empty_state()
-
+        
+        # Protocolo de fechamento
         self.protocol("WM_DELETE_WINDOW", self._fechar)
-
+    
     def _fechar(self):
         try:
             plt.close('all')
@@ -541,230 +899,641 @@ class VigaApp(tk.Tk):
         finally:
             self.quit()
             self.destroy()
-
-    def _configurar_estilos(self):
-        style = ttk.Style(self)
-        style.theme_use('clam')
-
-        style.configure("TFrame", background=self.theme["bg_main"])
-        style.configure("Panel.TFrame", background=self.theme["bg_panel"])
-        style.configure("TLabelframe", background=self.theme["bg_panel"], font=self.theme["font_title"])
-        style.configure("TLabelframe.Label", background=self.theme["bg_panel"], font=self.theme["font_title"], foreground=self.theme["primary"])
-        style.configure("TLabel", background=self.theme["bg_panel"], font=self.theme["font_body"])
-
-        style.configure("TButton", font=self.theme["font_body"], padding=6)
-        style.configure("Acao.TButton", font=("Segoe UI", 11, "bold"), background=self.theme["primary"], foreground="white")
-        style.map("Acao.TButton", background=[('active', '#0078D7')])
-        style.configure("Alerta.TButton", background=self.theme["danger"], foreground="white")
-        style.map("Alerta.TButton", background=[('active', '#E81123'), ('disabled', '#FADCDD')])
-
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # CONSTRUÇÃO DA UI
+    # ══════════════════════════════════════════════════════════════════════════
     def _build_ui(self):
-        container = ttk.Frame(self)
-        container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(20, 20))
-
-        self.frame_esq = ttk.Frame(container, width=500)
-        self.frame_esq.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 20))
-        self.frame_esq.pack_propagate(False)
-
-        self.frame_dir = ttk.Frame(container)
-        self.frame_dir.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        self._build_panel_geometria()
-        self._build_panel_cargas()
-        self._build_panel_dashboard()
-        self._build_graficos()
-
-    def _build_panel_geometria(self):
-        f_geo = ttk.LabelFrame(self.frame_esq, text=" 1. Geometria da Viga ", padding=15)
-        f_geo.pack(fill=tk.X, pady=(0, 15))
-
-        linha1 = ttk.Frame(f_geo, style="Panel.TFrame")
-        linha1.pack(fill=tk.X, pady=5)
-        ttk.Label(linha1, text="Comprimento Total L [m]:").pack(side=tk.LEFT)
-        self.entry_L = ttk.Entry(linha1, width=8, justify="center")
-        self.entry_L.insert(0, "10")
-        self.entry_L.pack(side=tk.RIGHT)
-
-        ttk.Separator(f_geo, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-
-        ttk.Label(f_geo, text="Tipo de Apoio:").pack(anchor=tk.W)
-        self.var_apoio = tk.StringVar(value="simples")
-
-        f_radios = ttk.Frame(f_geo, style="Panel.TFrame")
-        f_radios.pack(fill=tk.X, pady=5)
-        ttk.Radiobutton(f_radios, text="Bi-Apoiada", variable=self.var_apoio, value="simples", command=self._atualizar_apoios).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(f_radios, text="Engastada", variable=self.var_apoio, value="engaste", command=self._atualizar_apoios).pack(side=tk.LEFT)
-
-        self.f_pos = ttk.Frame(f_geo, style="Panel.TFrame")
-        self.f_pos.pack(fill=tk.X, pady=(5, 0))
-
-        self.lbl_xa = ttk.Label(self.f_pos, text="Pos. Pino [m]:")
-        self.lbl_xa.grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.entry_xa = ttk.Entry(self.f_pos, width=8, justify="center")
-        self.entry_xa.insert(0, "0")
-        self.entry_xa.grid(row=0, column=1, sticky=tk.E, pady=2)
-
-        self.lbl_xb = ttk.Label(self.f_pos, text="Pos. Rolete [m]:")
-        self.lbl_xb.grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.entry_xb = ttk.Entry(self.f_pos, width=8, justify="center")
-        self.entry_xb.insert(0, "10")
-        self.entry_xb.grid(row=1, column=1, sticky=tk.E, pady=2)
-
-        self.f_pos.columnconfigure(0, weight=1)
-
-    def _build_panel_cargas(self):
-        f_cargas = ttk.LabelFrame(self.frame_esq, text=" 2. Carregamentos ", padding=15)
-        f_cargas.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        self.tree_cargas = ttk.Treeview(f_cargas, columns=("tipo", "valor", "posicao"), show="headings", height=4)
-        self.tree_cargas.heading("tipo", text="Tipo")
-        self.tree_cargas.heading("valor", text="Valor")
-        self.tree_cargas.heading("posicao", text="Posição")
-        self.tree_cargas.column("tipo", width=120)
-        self.tree_cargas.column("valor", width=80, anchor=tk.CENTER)
-        self.tree_cargas.column("posicao", width=120, anchor=tk.CENTER)
-        self.tree_cargas.config(cursor="hand2")
-        self.tree_cargas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        self.tree_cargas.bind("<<TreeviewSelect>>", self._verificar_selecao)
-
-        f_botoes = ttk.Frame(f_cargas, style="Panel.TFrame")
-        f_botoes.pack(fill=tk.X, pady=(10, 0))
-
-        btn_add = ttk.Button(f_botoes, text="➕ Nova Carga", command=self._abrir_modal)
-        btn_add.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        btn_add.config(cursor="hand2")
-
-        self.btn_rem = ttk.Button(f_botoes, text="🗑️ Remover", style="Alerta.TButton", command=self._remover_carga, state=tk.DISABLED)
-        self.btn_rem.pack(side=tk.RIGHT)
-
-    def _build_panel_dashboard(self):
-        f_calc = ttk.Frame(self.frame_esq, style="TFrame")
-        f_calc.pack(fill=tk.X)
-
-        btn_calc = ttk.Button(f_calc, text="▶ CALCULAR DIAGRAMAS", style="Acao.TButton", command=self.processar)
-        btn_calc.pack(fill=tk.X, pady=(0, 10), ipady=10)
-        btn_calc.config(cursor="hand2")
-
-        self.f_cards = ttk.Frame(f_calc, style="TFrame")
-        self.f_cards.pack(fill=tk.X)
-
-        self.card_r = ttk.LabelFrame(self.f_cards, text=" Reações ")
-        self.card_r.grid(row=0, column=0, padx=(0, 5), sticky="nsew")
-        self.lbl_res_r = ttk.Label(self.card_r, text="-", font=self.theme["font_mono"])
-        self.lbl_res_r.pack(padx=5, pady=5, anchor=tk.W)
-
-        self.card_v = ttk.LabelFrame(self.f_cards, text=" Cortante Máx (V) ")
-        self.card_v.grid(row=0, column=1, padx=5, sticky="nsew")
-        self.lbl_res_v = ttk.Label(self.card_v, text="-", font=("Segoe UI", 12, "bold"), foreground=self.theme["primary"])
-        self.lbl_res_v.pack(padx=5, pady=10)
-
-        self.card_m = ttk.LabelFrame(self.f_cards, text=" Fletor Máx (M) ")
-        self.card_m.grid(row=0, column=2, padx=(5, 0), sticky="nsew")
-        self.lbl_res_m = ttk.Label(self.card_m, text="-", font=("Segoe UI", 12, "bold"), foreground=self.theme["primary"])
-        self.lbl_res_m.pack(padx=5, pady=10)
-
-        self.f_cards.columnconfigure((0, 1, 2), weight=1)
-
-    def _build_graficos(self):
-        fig, (ax_viga, ax_v, ax_m) = plt.subplots(3, 1, figsize=(8, 8), height_ratios=[1.2, 2, 2])
-        fig.patch.set_facecolor(self.theme["bg_main"])
-
-        canvas = FigureCanvasTkAgg(fig, master=self.frame_dir)
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        self.renderer = VigaRenderer(fig, ax_viga, ax_v, ax_m, canvas)
-
+        # Topbar
+        self._build_topbar()
+        
+        # Corpo principal
+        corpo = tk.Frame(self, bg=CORES["bg_main"])
+        corpo.pack(fill=tk.BOTH, expand=True)
+        
+        # Sidebar
+        self._build_sidebar(corpo)
+        
+        # Área central
+        self._build_central_area(corpo)
+        
+        # Ativar primeira aba APÓS tudo estar construído
+        self._activate_sidebar_tab("geometria")
+    
+    def _build_topbar(self):
+        topbar = tk.Frame(self, bg=CORES["bg_topbar"], height=_px(40))
+        topbar.pack(fill=tk.X)
+        topbar.pack_propagate(False)
+        
+        tk.Label(
+            topbar, text="  ⬡  Análise Estrutural",
+            bg=CORES["bg_topbar"], fg=CORES["primary"],
+            font=("Segoe UI", _fs(10), "bold")
+        ).pack(side=tk.LEFT, padx=(_px(10), _px(20)))
+        
+        self.status_label = tk.Label(
+            topbar, text="Pronto",
+            bg=CORES["bg_topbar"], fg=CORES["text_muted"],
+            font=FONT_SMALL
+        )
+        self.status_label.pack(side=tk.LEFT, padx=_px(10))
+        
+        DarkButton(
+            topbar, text="🗑 Limpar Tudo",
+            bg=CORES["bg_sidebar"], fg=CORES["text_sec"],
+            command=self._limpar_tudo
+        ).pack(side=tk.RIGHT, padx=_px(10), pady=_px(5))
+        
+        DarkButton(
+            topbar, text="▶ Resolver",
+            bg=CORES["success"], command=self.processar
+        ).pack(side=tk.RIGHT, padx=_px(3), pady=_px(5))
+    
+    def _build_sidebar(self, parent):
+        sidebar = tk.Frame(parent, bg=CORES["bg_sidebar"], width=_px(195))
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)
+        
+        def section(text):
+            tk.Label(
+                sidebar, text=text.upper(),
+                bg=CORES["bg_sidebar"], fg=CORES["sidebar_sect"],
+                font=("Segoe UI", _fs(7), "bold"), anchor="w"
+            ).pack(fill=tk.X, padx=_px(10), pady=(_px(8), 0))
+        
+        def add_button(key, icon, text):
+            btn = SidebarButton(
+                sidebar, text=text, icon=icon,
+                command=lambda k=key: self._activate_sidebar_tab(k)
+            )
+            btn.pack(fill=tk.X, padx=6)
+            self.sidebar_buttons[key] = btn
+        
+        section("Modelo")
+        add_button("geometria", "⬛", "Geometria")
+        add_button("apoios", "▽", "Apoios")
+        
+        separador(sidebar)
+        
+        section("Cargas")
+        add_button("pontuais", "↓", "Cargas Pontuais")
+        add_button("momentos", "↺", "Momentos")
+        add_button("distribuidas", "≋", "Distribuídas")
+        
+        tk.Frame(sidebar, bg=CORES["bg_sidebar"]).pack(
+            fill=tk.BOTH, expand=True
+        )
+        
+        separador(sidebar)
+        
+        tk.Label(
+            sidebar, text="v0.0.1 - Teste",
+            bg=CORES["bg_sidebar"], fg=CORES["text_muted"],
+            font=("Segoe UI", _fs(7))
+        ).pack(pady=_px(5))
+    
+    def _activate_sidebar_tab(self, key):
+        """Ativa uma aba da sidebar e renderiza o painel correspondente."""
+        # Verificar se o panel_body já existe
+        if not hasattr(self, 'panel_body') or self.panel_body is None:
+            return
+        
+        for k, btn in self.sidebar_buttons.items():
+            btn.set_active(k == key)
+        
+        self._render_panel(key)
+    
+    def _build_central_area(self, parent):
+        centro = tk.Frame(parent, bg=CORES["bg_main"])
+        centro.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        split = tk.Frame(centro, bg=CORES["bg_main"])
+        split.pack(fill=tk.BOTH, expand=True)
+        
+        # Área dos gráficos
+        self.canvas_area = tk.Frame(split, bg=CORES["bg_canvas"])
+        self.canvas_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Inicializar matplotlib com tamanho proporcional à tela
+        fig_w = 10 * _SCALE
+        fig_h = max(5.5, 8 * _SCALE)
+        self.fig, (self.ax_viga, self.ax_v, self.ax_m) = plt.subplots(
+            3, 1, figsize=(fig_w, fig_h),
+            height_ratios=[1.2, 2, 2],
+            facecolor=CORES["bg_canvas"]
+        )
+        
+        # Ajustar espaçamento entre subplots
+        self.fig.subplots_adjust(hspace=0.45, top=0.95, bottom=0.07, left=0.10, right=0.97)
+        
+        self.fig_canvas = FigureCanvasTkAgg(self.fig, master=self.canvas_area)
+        self.fig_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        self.renderer = VigaRenderer(
+            self.fig, self.ax_viga, self.ax_v, self.ax_m, self.fig_canvas
+        )
+        
+        # Painel de configuração (à direita) — largura responsiva
+        config_w = _px(270)
+        self.config_panel = tk.Frame(
+            split, bg=CORES["bg_panel"], width=config_w,
+            highlightthickness=1, highlightbackground=CORES["border"]
+        )
+        self.config_panel.pack(side=tk.RIGHT, fill=tk.Y)
+        self.config_panel.pack_propagate(False)
+        
+        # Título do painel
+        self.panel_title = tk.Label(
+            self.config_panel, text="Geometria da Viga",
+            bg=CORES["bg_sidebar"], fg=CORES["text_pri"],
+            font=FONT_TITLE, anchor="w", padx=12, pady=10
+        )
+        self.panel_title.pack(fill=tk.X)
+        tk.Frame(self.config_panel, height=1, bg=CORES["border"]).pack(fill=tk.X)
+        
+        # Corpo do painel (onde o conteúdo muda)
+        self.panel_body = tk.Frame(self.config_panel, bg=CORES["bg_panel"])
+        self.panel_body.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        
+        # Barra inferior de resultados
+        self._build_bottom_bar(centro)
+    
+    def _build_bottom_bar(self, parent):
+        """Constroi a barra inferior com os resultados."""
+        bottom = tk.Frame(
+            parent, bg=CORES["bg_sidebar"],
+            highlightthickness=1, highlightbackground=CORES["border"]
+        )
+        bottom.pack(fill=tk.X, side=tk.BOTTOM)
+        
+        # Cartões de resultado - CORRIGIDO: usar chaves consistentes
+        chaves = ["reações", "cortante", "momento"]  # sem acentos para consistência
+        
+        for titulo, chave in zip(["REAÇÕES", "CORTANTE", "MOMENTO"], chaves):
+            frame = tk.Frame(
+                bottom, bg=CORES["bg_panel"],
+                highlightthickness=1, highlightbackground=CORES["border"],
+                padx=_px(10), pady=_px(4)
+            )
+            frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=_px(4), pady=_px(4))
+            
+            tk.Label(
+                frame, text=titulo, bg=CORES["bg_panel"],
+                fg=CORES["sidebar_sect"], font=("Segoe UI", _fs(7), "bold")
+            ).pack(anchor="w")
+            
+            lbl = tk.Label(
+                frame, text="---", bg=CORES["bg_panel"],
+                fg=CORES["text_pri"], font=FONT_MONO_B,
+                justify=tk.LEFT
+            )
+            lbl.pack(anchor="w")
+            
+            self.result_labels[chave] = lbl  # Usar chave sem acento
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # RENDERIZAÇÃO DO PAINEL DE CONFIGURAÇÃO
+    # ══════════════════════════════════════════════════════════════════════════
+    def _render_panel(self, tab_key):
+        """Renderiza o conteúdo do painel direito conforme a aba selecionada."""
+        if self.panel_body is None:
+            return
+        
+        # Limpar painel
+        for w in self.panel_body.winfo_children():
+            w.destroy()
+        
+        if tab_key == "geometria":
+            self.panel_title.config(text="Geometria da Viga")
+            self._render_geometria_panel()
+        elif tab_key == "apoios":
+            self.panel_title.config(text="Configuração dos Apoios")
+            self._render_apoios_panel()
+        else:
+            self.panel_title.config(text="Adicionar Carregamento")
+            self._render_cargas_panel(tab_key)
+    
+    def _render_geometria_panel(self):
+        self.panel_body.columnconfigure(1, weight=1)
+        
+        tk.Label(
+            self.panel_body, text="Comprimento Total L [m]:",
+            bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_BODY
+        ).grid(row=0, column=0, sticky="w", pady=5)
+        
+        self.entry_L = DarkEntry(self.panel_body, width=12)
+        self.entry_L.insert(0, str(self.comprimento_viga))
+        self.entry_L.grid(row=0, column=1, sticky="ew", pady=5, padx=(8, 0))
+        
+        tk.Label(
+            self.panel_body, text="\nDefina o comprimento total da viga\nem metros.",
+            bg=CORES["bg_panel"], fg=CORES["text_muted"], font=FONT_SMALL,
+            justify=tk.LEFT
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+        
+        DarkButton(
+            self.panel_body, text="Aplicar Geometria",
+            bg=CORES["primary"],
+            command=self._aplicar_geometria
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(20, 0), ipady=4)
+    
+    def _render_apoios_panel(self):
+        self.panel_body.columnconfigure(1, weight=1)
+        
+        tk.Label(
+            self.panel_body, text="Tipo de Apoio:",
+            bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_BODY
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        
+        self.var_apoio_tipo = tk.StringVar(value=self.tipo_apoio)
+        
+        for idx, (text, val) in enumerate([
+            ("Bi-Apoiada (Pino + Rolete)", "simples"),
+            ("Engastada", "engaste")
+        ]):
+            rb = tk.Radiobutton(
+                self.panel_body, text=text, variable=self.var_apoio_tipo,
+                value=val, bg=CORES["bg_panel"], fg=CORES["text_sec"],
+                selectcolor=CORES["bg_sidebar"],
+                activebackground=CORES["bg_panel"],
+                activeforeground=CORES["text_pri"],
+                font=FONT_BODY, command=self._atualizar_apoios
+            )
+            rb.grid(row=idx + 1, column=0, columnspan=2, sticky="w", pady=3)
+        
+        # Frame para posições dos apoios
+        self.apoios_frame = tk.Frame(self.panel_body, bg=CORES["bg_panel"])
+        self.apoios_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(15, 0))
+        self.apoios_frame.columnconfigure(1, weight=1)
+        
+        self._atualizar_apoios()
+        
+        DarkButton(
+            self.panel_body, text="Aplicar Apoios",
+            bg=CORES["primary"],
+            command=self._aplicar_apoios
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(15, 0), ipady=4)
+    
     def _atualizar_apoios(self):
-        if self.var_apoio.get() == "engaste":
-            self.lbl_xa.config(text="Pos. Engaste [m]:")
-            self.lbl_xb.grid_remove()
-            self.entry_xb.grid_remove()
+        """Atualiza os campos de posição dos apoios conforme o tipo."""
+        if not hasattr(self, 'apoios_frame'):
+            return
+        
+        for w in self.apoios_frame.winfo_children():
+            w.destroy()
+        
+        tipo = self.var_apoio_tipo.get()
+        
+        if tipo == "engaste":
+            tk.Label(
+                self.apoios_frame, text="Pos. Engaste [m]:",
+                bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_BODY
+            ).grid(row=0, column=0, sticky="w", pady=5)
+            
+            self.entry_apoio_a = DarkEntry(self.apoios_frame, width=12)
+            self.entry_apoio_a.insert(0, str(self.pos_apoio_a))
+            self.entry_apoio_a.grid(row=0, column=1, sticky="ew", pady=5, padx=(8, 0))
+        
         else:
-            self.lbl_xa.config(text="Pos. Pino [m]:")
-            self.lbl_xb.grid()
-            self.entry_xb.grid()
-
-    def _abrir_modal(self):
-        try:
-            val = self.entry_L.get()
-            if not val: raise ValueError
-            L = parse_float(val)
-            if L <= 0: raise ValueError
-            ModalNovaCarga(self, self.theme, L, self._receber_nova_carga)
-        except ValueError:
-            DialogoErro(self, "Geometria Inválida", "Defina um Comprimento Total (L) válido antes de adicionar cargas.")
-
-    def _verificar_selecao(self, event):
-        if self.tree_cargas.selection():
-            self.btn_rem.config(state=tk.NORMAL)
-            self.btn_rem.config(cursor="hand2")
+            tk.Label(
+                self.apoios_frame, text="Pos. Pino [m]:",
+                bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_BODY
+            ).grid(row=0, column=0, sticky="w", pady=5)
+            
+            self.entry_apoio_a = DarkEntry(self.apoios_frame, width=12)
+            self.entry_apoio_a.insert(0, str(self.pos_apoio_a))
+            self.entry_apoio_a.grid(row=0, column=1, sticky="ew", pady=5, padx=(8, 0))
+            
+            tk.Label(
+                self.apoios_frame, text="Pos. Rolete [m]:",
+                bg=CORES["bg_panel"], fg=CORES["text_sec"], font=FONT_BODY
+            ).grid(row=1, column=0, sticky="w", pady=5)
+            
+            self.entry_apoio_b = DarkEntry(self.apoios_frame, width=12)
+            self.entry_apoio_b.insert(0, str(self.pos_apoio_b))
+            self.entry_apoio_b.grid(row=1, column=1, sticky="ew", pady=5, padx=(8, 0))
+    
+    def _render_cargas_panel(self, tipo_carga):
+        """Renderiza o painel de cargas para o tipo selecionado."""
+        self.panel_body.columnconfigure(0, weight=1)
+        
+        # Mapear tipo de aba para tipo de carga
+        tipo_map = {
+            "pontuais": ("pontual", "Cargas Pontuais"),
+            "momentos": ("momento", "Momentos Concentrados"),
+            "distribuidas": ("distrib", "Cargas Distribuídas"),
+        }
+        
+        if tipo_carga in tipo_map:
+            tipo_filtro, titulo = tipo_map[tipo_carga]
+            
+            tk.Label(
+                self.panel_body, text=titulo,
+                bg=CORES["bg_panel"], fg=CORES["text_pri"],
+                font=FONT_HEADING
+            ).pack(anchor="w", pady=(0, 10))
+            
+            # Lista de cargas
+            lista_frame = tk.Frame(self.panel_body, bg=CORES["bg_canvas"])
+            lista_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Treeview para cargas
+            colunas = ("tipo", "detalhes")
+            self.tree_cargas = ttk.Treeview(
+                lista_frame, columns=colunas,
+                show="headings", height=5
+            )
+            self.tree_cargas.heading("tipo", text="Tipo")
+            self.tree_cargas.heading("detalhes", text="Detalhes")
+            self.tree_cargas.column("tipo", width=100)
+            self.tree_cargas.column("detalhes", width=200)
+            
+            # Scrollbar
+            scrollbar = ttk.Scrollbar(
+                lista_frame, orient="vertical",
+                command=self.tree_cargas.yview
+            )
+            self.tree_cargas.configure(yscrollcommand=scrollbar.set)
+            
+            self.tree_cargas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # Preencher com cargas existentes do tipo filtrado
+            for i, c in enumerate(self.cargas_adicionadas):
+                if c["tipo"] == tipo_filtro:
+                    self._adicionar_item_tree(c, i)
+            
+            # Botões
+            btn_frame = tk.Frame(self.panel_body, bg=CORES["bg_panel"])
+            btn_frame.pack(fill=tk.X, pady=(0, 5))
+            
+            DarkButton(
+                btn_frame, text="➕ Nova Carga",
+                bg=CORES["primary"],
+                command=lambda: self._abrir_modal_carga()
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+            
+            DarkButton(
+                btn_frame, text="🗑 Remover",
+                bg=CORES["danger"],
+                command=self._remover_carga_selecionada
+            ).pack(side=tk.RIGHT)
+    
+    def _adicionar_item_tree(self, carga, idx):
+        """Adiciona uma carga à treeview."""
+        tipo_str = carga.get("tipo_str", "")
+        if carga["tipo"] == "pontual":
+            detalhe = f"{carga['val']:.1f} N em x={carga['pos']:.1f}m"
+        elif carga["tipo"] == "momento":
+            detalhe = f"{carga['val']:.1f} N.m em x={carga['pos']:.1f}m"
         else:
-            self.btn_rem.config(state=tk.DISABLED)
-            self.btn_rem.config(cursor="arrow")
-
-    def _receber_nova_carga(self, dados):
-        self.cargas_adicionadas.append(dados)
-
-        t = dados["tipo_str"]
-        if dados["tipo"] == "pontual":
-            self.tree_cargas.insert("", tk.END, values=(t, f"{dados['val']:.1f} N", f"x = {dados['pos']:.1f} m"))
-        elif dados["tipo"] == "momento":
-            self.tree_cargas.insert("", tk.END, values=(t, f"{dados['val']:.1f} N.m", f"x = {dados['pos']:.1f} m"))
-        else:
-            if abs(dados['qi'] - dados['qf']) < 1e-6:
-                v_str = f"{dados['qi']:.1f} N/m"
+            if abs(carga['qi'] - carga['qf']) < 1e-6:
+                detalhe = f"{carga['qi']:.1f} N/m de x={carga['xi']:.1f} a {carga['xf']:.1f}m"
             else:
-                v_str = f"de {dados['qi']:.1f} a {dados['qf']:.1f} N/m"
-            self.tree_cargas.insert("", tk.END, values=(t, v_str, f"x: {dados['xi']:.1f} a {dados['xf']:.1f} m"))
-
-    def _remover_carga(self):
-        sel = self.tree_cargas.selection()
-        if sel:
-            idx = self.tree_cargas.index(sel[0])
-            self.tree_cargas.delete(sel[0])
-            self.cargas_adicionadas.pop(idx)
-            self._verificar_selecao(None)
-
-            self.lbl_res_r.config(text="-")
-            self.lbl_res_v.config(text="-")
-            self.lbl_res_m.config(text="-")
-
-    def processar(self):
+                detalhe = f"{carga['qi']:.1f}→{carga['qf']:.1f} N/m"
+        
+        if self.tree_cargas:
+            self.tree_cargas.insert("", tk.END, iid=str(idx), values=(tipo_str, detalhe))
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # AÇÕES DO USUÁRIO
+    # ══════════════════════════════════════════════════════════════════════════
+    def _aplicar_geometria(self):
+        """Aplica a geometria da viga."""
         try:
             L = parse_float(self.entry_L.get())
-            if L <= 0: raise ValueError("Comprimento da viga deve ser maior que zero.")
-
-            t_apoio = self.var_apoio.get()
-            xa = parse_float(self.entry_xa.get())
-            xb = parse_float(self.entry_xb.get()) if t_apoio == 'simples' else None
-
-            viga = VigaEngine(L)
+            if L <= 0:
+                raise ValueError("Comprimento deve ser maior que zero.")
+            
+            self.comprimento_viga = L
+            
+            # Atualizar posições dos apoios se necessário
+            if self.pos_apoio_a > L:
+                self.pos_apoio_a = 0.0
+            if self.pos_apoio_b > L:
+                self.pos_apoio_b = L
+            
+            # Remover cargas fora da viga
+            self.cargas_adicionadas = [
+                c for c in self.cargas_adicionadas
+                if self._carga_dentro_da_viga(c)
+            ]
+            
+            # Atualizar a visualização
+            self._renderizar_esquema()
+            
+            # Recarregar painel atual para refletir mudanças
+            for key, btn in self.sidebar_buttons.items():
+                if btn.active:
+                    self._render_panel(key)
+                    break
+            
+            if self.status_label:
+                self.status_label.config(text=f"✅ Geometria aplicada: L={L:.1f}m")
+            
+        except ValueError as e:
+            DialogoErro(self, "Geometria Inválida", str(e))
+    
+    def _carga_dentro_da_viga(self, carga):
+        """Verifica se uma carga está dentro dos limites da viga."""
+        if carga["tipo"] in ["pontual", "momento"]:
+            return 0 <= carga["pos"] <= self.comprimento_viga
+        else:
+            return (0 <= carga["xi"] <= self.comprimento_viga and
+                    0 < carga["xf"] <= self.comprimento_viga)
+    
+    def _aplicar_apoios(self):
+        """Aplica a configuração de apoios."""
+        try:
+            tipo = self.var_apoio_tipo.get()
+            pos_a = parse_float(self.entry_apoio_a.get())
+            
+            if not (0 <= pos_a <= self.comprimento_viga):
+                raise ValueError(f"Posição do apoio fora da viga (0 a {self.comprimento_viga} m)")
+            
+            if tipo == "simples":
+                pos_b = parse_float(self.entry_apoio_b.get())
+                if not (0 <= pos_b <= self.comprimento_viga):
+                    raise ValueError(f"Posição do rolete fora da viga (0 a {self.comprimento_viga} m)")
+                if abs(pos_a - pos_b) < 1e-6:
+                    raise ValueError("Os apoios não podem estar na mesma posição.")
+                self.pos_apoio_b = pos_b
+            
+            self.tipo_apoio = tipo
+            self.pos_apoio_a = pos_a
+            
+            self._renderizar_esquema()
+            if self.status_label:
+                self.status_label.config(
+                    text=f"✅ Apoios configurados: {tipo} (xA={pos_a:.1f}m)"
+                )
+            
+        except ValueError as e:
+            DialogoErro(self, "Apoio Inválido", str(e))
+    
+    def _abrir_modal_carga(self):
+        """Abre o modal para adicionar uma nova carga."""
+        if self.comprimento_viga <= 0:
+            DialogoErro(
+                self, "Geometria Necessária",
+                "Defina o comprimento da viga antes de adicionar cargas."
+            )
+            return
+        
+        ModalNovaCarga(self, self.comprimento_viga, self._receber_nova_carga)
+    
+    def _receber_nova_carga(self, dados):
+        """Recebe os dados de uma nova carga."""
+        self.cargas_adicionadas.append(dados)
+        
+        if self.status_label:
+            self.status_label.config(text=f"✅ Carga adicionada: {dados['tipo_str']}")
+        
+        # Recarregar painel atual para mostrar a nova carga
+        for key, btn in self.sidebar_buttons.items():
+            if btn.active:
+                self._render_panel(key)
+                break
+        
+        self._renderizar_esquema()
+    
+    def _remover_carga_selecionada(self):
+        """Remove a carga selecionada na treeview."""
+        if self.tree_cargas is None:
+            return
+        
+        selecionado = self.tree_cargas.selection()
+        if selecionado:
+            idx = int(selecionado[0])
+            if 0 <= idx < len(self.cargas_adicionadas):
+                self.cargas_adicionadas.pop(idx)
+                
+                # Recarregar a aba atual
+                for key, btn in self.sidebar_buttons.items():
+                    if btn.active:
+                        self._render_panel(key)
+                        break
+                
+                self._renderizar_esquema()
+                if self.status_label:
+                    self.status_label.config(text="🗑 Carga removida")
+    
+    def _limpar_tudo(self):
+        """Limpa todos os dados e resultados."""
+        self.cargas_adicionadas.clear()
+        self.resultados = None
+        
+        # Limpar labels de resultado
+        for chave in ["reações", "cortante", "momento"]:
+            if chave in self.result_labels and self.result_labels[chave]:
+                self.result_labels[chave].config(text="---")
+        
+        self.renderer.renderizar_empty_state()
+        
+        # Recarregar painel atual
+        for key, btn in self.sidebar_buttons.items():
+            if btn.active:
+                self._render_panel(key)
+                break
+        
+        if self.status_label:
+            self.status_label.config(text="🗑 Todos os dados foram limpos")
+    
+    def _renderizar_esquema(self):
+        """Renderiza o diagrama de corpo livre com as cargas atuais."""
+        if self.comprimento_viga > 0 and hasattr(self, 'renderer'):
+            self.renderer.renderizar_esquema(
+                self.comprimento_viga,
+                self.tipo_apoio,
+                self.pos_apoio_a,
+                self.pos_apoio_b if self.tipo_apoio == "simples" else None,
+                self.cargas_adicionadas
+            )
+    
+    def processar(self):
+        """Executa o cálculo estrutural completo."""
+        try:
+            if self.comprimento_viga <= 0:
+                raise ValueError("Defina o comprimento da viga primeiro.")
+            
+            # Validar apoios
+            if self.tipo_apoio == "simples":
+                if abs(self.pos_apoio_a - self.pos_apoio_b) < 1e-6:
+                    raise ValueError("Apoios não podem coincidir.")
+            
+            # Criar engine
+            viga = VigaEngine(self.comprimento_viga)
+            
             for c in self.cargas_adicionadas:
                 if c["tipo"] == "pontual":
                     viga.adicionar_carga_pontual(c["pos"], c["val"])
                 elif c["tipo"] == "momento":
                     viga.adicionar_momento(c["pos"], c["val"])
                 elif c["tipo"] == "distrib":
-                    viga.adicionar_carga_distribuida(c["qi"], c["qf"], c["xi"], c["xf"])
-
-            viga.calcular_reacoes(t_apoio, xa, xb)
-            res = viga.calcular_esforcos()
-
-            t_res = ""
-            for r in viga.reacoes_calculadas:
-                t_res += f"{r['nome']} = {r['valor']:+.2f}\n"
-            self.lbl_res_r.config(text=t_res.strip() if t_res else "-")
-
-            self.lbl_res_v.config(text=f"Máx (+): {res['V_max']:+.2f} N\nMín (-): {res['V_min']:+.2f} N")
-            self.lbl_res_m.config(text=f"Máx (+): {res['M_max']:+.2f} N.m\nMín (-): {res['M_min']:+.2f} N.m")
-
-            self.renderer.renderizar_esquema(L, t_apoio, xa, xb, self.cargas_adicionadas)
-            self.renderer.renderizar_diagramas(res)
-
+                    viga.adicionar_carga_distribuida(
+                        c["qi"], c["qf"], c["xi"], c["xf"]
+                    )
+            
+            # Calcular
+            xb = self.pos_apoio_b if self.tipo_apoio == "simples" else None
+            viga.calcular_reacoes(self.tipo_apoio, self.pos_apoio_a, xb)
+            self.resultados = viga.calcular_esforcos()
+            
+            # Atualizar labels de resultado - CORRIGIDO: usar chaves sem acento
+            if self.resultados and self.result_labels:
+                # Reações
+                reacoes_text = ""
+                for r in viga.reacoes_calculadas:
+                    reacoes_text += f"{r.nome} = {r.valor:+.2f}\n"
+                
+                if "reações" in self.result_labels and self.result_labels["reações"]:
+                    self.result_labels["reações"].config(
+                        text=reacoes_text.strip() if reacoes_text else "Sem reações"
+                    )
+                
+                # Cortante
+                if "cortante" in self.result_labels and self.result_labels["cortante"]:
+                    self.result_labels["cortante"].config(
+                        text=f"Máx (+): {self.resultados['V_max']:+.2f} N\n"
+                             f"Mín (-): {self.resultados['V_min']:+.2f} N"
+                    )
+                
+                # Momento
+                if "momento" in self.result_labels and self.result_labels["momento"]:
+                    self.result_labels["momento"].config(
+                        text=f"Máx (+): {self.resultados['M_max']:+.2f} N.m\n"
+                             f"Mín (-): {self.resultados['M_min']:+.2f} N.m"
+                    )
+            
+            # Renderizar gráficos
+            self.renderer.renderizar_esquema(
+                self.comprimento_viga,
+                self.tipo_apoio,
+                self.pos_apoio_a,
+                self.pos_apoio_b if self.tipo_apoio == "simples" else None,
+                self.cargas_adicionadas
+            )
+            
+            self.renderer.renderizar_diagramas(
+                self.resultados,
+                self.comprimento_viga
+            )
+            
+            if self.status_label:
+                self.status_label.config(text="✅ Cálculo concluído com sucesso!")
+            
         except Exception as e:
-            DialogoErro(self, "Aviso Estrutural", str(e), traceback.format_exc())
+            DialogoErro(
+                self, "Erro no Cálculo",
+                str(e),
+                traceback.format_exc()
+            )
+            if self.status_label:
+                self.status_label.config(text="❌ Erro no cálculo")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PONTO DE ENTRADA
+# ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     app = VigaApp()
     try:
