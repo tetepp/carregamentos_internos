@@ -5,3 +5,4 @@ venv:
 
 run:
 	python3 interface_tkinter.py
+

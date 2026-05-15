@@ -9,29 +9,35 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PALETA DE CORES - Design Escuro Moderno
+# PALETA DE CORES - Tema Rosa Feminino
 # ══════════════════════════════════════════════════════════════════════════════
 CORES = {
-    "bg_main":      "#1a1d27",
-    "bg_sidebar":   "#141620",
-    "bg_panel":     "#1e2130",
-    "bg_canvas":    "#0f1117",
-    "bg_topbar":    "#141620",
-    "border":       "#2d3148",
-    "primary":      "#2563eb",
-    "primary_hover":"#1d4ed8",
-    "success":      "#22c55e",
-    "danger":       "#ef4444",
-    "warning":      "#f59e0b",
-    "text_pri":     "#e2e8f0",
-    "text_sec":     "#94a3b8",
-    "text_muted":   "#4b5563",
-    "sidebar_btn_bg":  "#1e2130",
-    "sidebar_btn_act": "#1e3a5f",
-    "sidebar_sect": "#6b7280",
-    "carga_pontual": "#ef4444",
-    "carga_momento": "#f59e0b",
-    "carga_distrib": "#22c55e",
+    "bg_main":      "#fff1f7",   # fundo principal rosinha claro
+    "bg_sidebar":   "#f8d7e8",   # sidebar rosa pastel
+    "bg_panel":     "#ffe4ef",   # painéis
+    "bg_canvas":    "#fff7fb",   # fundo dos gráficos
+    "bg_topbar":    "#f9c5d5",
+
+    "border":       "#e7a8c2",
+
+    "primary":      "#ec4899",   # rosa principal
+    "primary_hover":"#db2777",
+
+    "success":      "#d946ef",   # lilás vibrante
+    "danger":       "#fb7185",   # rosa avermelhado
+    "warning":      "#f9a8d4",   # rosa suave
+
+    "text_pri":     "#4a044e",   # roxo escuro elegante
+    "text_sec":     "#7e2253",
+    "text_muted":   "#b06a8d",
+
+    "sidebar_btn_bg":  "#fbcfe8",
+    "sidebar_btn_act": "#ec4899",
+    "sidebar_sect": "#9d174d",
+
+    "carga_pontual": "#fb7185",
+    "carga_momento": "#c084fc",
+    "carga_distrib": "#f472b6",
 }
 
 def _get_screen_scale() -> float:
@@ -399,7 +405,7 @@ class VigaRenderer:
             fontweight='bold', color=CORES["text_pri"], pad=_px(8), fontsize=_fs(10)
         )
         self.ax_viga.set_xlim(-0.5, L + 0.5)
-        self.ax_viga.set_ylim(-2.5, 2.5)
+        self.ax_viga.set_ylim(-2.2, 2.5)
         self.ax_viga.axis('off')
         
         # Viga
@@ -414,10 +420,10 @@ class VigaRenderer:
             )
             self.ax_viga.add_patch(rect)
         else:
-            # Pino
+            # Pino (roxo)
             pino = patches.Polygon(
                 [[xa, 0], [xa - 0.2, -0.4], [xa + 0.2, -0.4]],
-                closed=True, color='#3b82f6', zorder=3
+                closed=True, color='#9333ea', zorder=3
             )
             self.ax_viga.add_patch(pino)
             self.ax_viga.plot(
@@ -425,20 +431,42 @@ class VigaRenderer:
                 color=CORES["text_sec"], lw=2
             )
             
-            # Rolete
-            rolete = patches.Polygon(
-                [[xb, 0], [xb - 0.2, -0.3], [xb + 0.2, -0.3]],
-                closed=True, color='#3b82f6', zorder=3
+            # Rolete (círculo vermelho)
+            rolete_circle = patches.Circle(
+                (xb, -0.2), 0.2,
+                linewidth=1.5, edgecolor='#dc2626',
+                facecolor='#ef4444', zorder=3
             )
-            self.ax_viga.add_patch(rolete)
+            self.ax_viga.add_patch(rolete_circle)
             self.ax_viga.plot(
-                [xb - 0.2, xb + 0.2], [-0.4, -0.4],
+                [xb - 0.25, xb + 0.25], [-0.42, -0.42],
                 color=CORES["text_sec"], lw=2
             )
-            for offset in [-0.1, 0.1]:
-                self.ax_viga.plot(xb + offset, -0.35, 'o', color=CORES["text_sec"], markersize=3)
         
-        # Cargas
+        # Régua abaixo da viga
+        self.ax_viga.set_xlim(-0.5, L + 0.5)
+        ruler_y = -1.2
+        self.ax_viga.plot([0, L], [ruler_y, ruler_y], color=CORES["border"], lw=1.5, zorder=5)
+        # Extremidades da régua
+        self.ax_viga.plot([0, 0], [ruler_y - 0.1, ruler_y + 0.1], color=CORES["border"], lw=1.5, zorder=5)
+        self.ax_viga.plot([L, L], [ruler_y - 0.1, ruler_y + 0.1], color=CORES["border"], lw=1.5, zorder=5)
+        # Marcações intermediárias
+        num_marks = min(10, max(5, int(L)))
+        step = L / num_marks
+        for i in range(num_marks + 1):
+            xr = i * step
+            is_major = (i % max(1, num_marks // 5) == 0) or (i == num_marks)
+            tick_h = 0.12 if is_major else 0.06
+            self.ax_viga.plot([xr, xr], [ruler_y - tick_h, ruler_y + tick_h],
+                              color=CORES["border"], lw=1.2, zorder=5)
+            if is_major:
+                self.ax_viga.text(xr, ruler_y - 0.28, f"{xr:.1f}m",
+                                  ha='center', va='top', fontsize=_fs(7),
+                                  color=CORES["text_muted"], zorder=5)
+        # Label comprimento total
+        self.ax_viga.text(L / 2, ruler_y - 0.52, f"L = {L:.1f} m",
+                          ha='center', va='top', fontsize=_fs(8),
+                          fontweight='bold', color=CORES["text_sec"], zorder=5)
         for c in cargas:
             if c.get("tipo") == "pontual":
                 cor = CORES["carga_pontual"] if c["val"] < 0 else CORES["success"]
@@ -588,10 +616,11 @@ class VigaRenderer:
 class ModalNovaCarga(tk.Toplevel):
     """Janela modal para adicionar cargas."""
     
-    def __init__(self, parent, L_max, callback_salvar):
+    def __init__(self, parent, L_max, callback_salvar, tipo_default="Pontual (Força)"):
         super().__init__(parent)
         self.L_max = L_max
         self.callback = callback_salvar
+        self._tipo_default = tipo_default
         
         self.title("Adicionar Nova Carga")
         modal_w, modal_h = _px(420), _px(380)
@@ -631,7 +660,7 @@ class ModalNovaCarga(tk.Toplevel):
             font=FONT_BODY
         ).pack(anchor=tk.W, pady=(0, 8))
         
-        self.var_tipo = tk.StringVar(value="Pontual (Força)")
+        self.var_tipo = tk.StringVar(value=self._tipo_default)
         cb = DarkCombobox(
             f_main, textvariable=self.var_tipo,
             values=[
@@ -647,7 +676,7 @@ class ModalNovaCarga(tk.Toplevel):
         self.f_inputs.pack(fill=tk.BOTH, expand=True)
         
         self.var_tipo.trace_add("write", self._atualizar_campos)
-        cb.current(0)
+        self._atualizar_campos()
         
         # Botões
         f_botoes = tk.Frame(f_main, bg=CORES["bg_panel"])
@@ -978,7 +1007,7 @@ class VigaApp(tk.Tk):
         section("Cargas")
         add_button("pontuais", "↓", "Cargas Pontuais")
         add_button("momentos", "↺", "Momentos")
-        add_button("distribuidas", "≋", "Distribuídas")
+        add_button("distribuidas", "≡", "Dist. Distribuídas")
         
         tk.Frame(sidebar, bg=CORES["bg_sidebar"]).pack(
             fill=tk.BOTH, expand=True
@@ -987,7 +1016,7 @@ class VigaApp(tk.Tk):
         separador(sidebar)
         
         tk.Label(
-            sidebar, text="v0.0.1 - Teste",
+            sidebar, text="v0.8.9 - Alpha",
             bg=CORES["bg_sidebar"], fg=CORES["text_muted"],
             font=("Segoe UI", _fs(7))
         ).pack(pady=_px(5))
@@ -1067,9 +1096,9 @@ class VigaApp(tk.Tk):
         bottom.pack(fill=tk.X, side=tk.BOTTOM)
         
         # Cartões de resultado - CORRIGIDO: usar chaves consistentes
-        chaves = ["reações", "cortante", "momento"]  # sem acentos para consistência
+        chaves = ["pessoa1", "pessoa2", "pessoa3", "pessoa4"]  # sem acentos para consistência
         
-        for titulo, chave in zip(["REAÇÕES", "CORTANTE", "MOMENTO"], chaves):
+        for titulo, chave in zip(["ANDRÉ FELLIPE MEIRA ALVES", "ESTER PANZINI PACHECO", "GABRIEL ALMEIDA DELLA CROCE", "GUSTAVO HENRIQUE PEREIRA FERREIRA"], chaves):
             frame = tk.Frame(
                 bottom, bg=CORES["bg_panel"],
                 highlightthickness=1, highlightbackground=CORES["border"],
@@ -1219,13 +1248,13 @@ class VigaApp(tk.Tk):
         
         # Mapear tipo de aba para tipo de carga
         tipo_map = {
-            "pontuais": ("pontual", "Cargas Pontuais"),
-            "momentos": ("momento", "Momentos Concentrados"),
-            "distribuidas": ("distrib", "Cargas Distribuídas"),
+            "pontuais": ("pontual", "Cargas Pontuais", "Pontual (Força)"),
+            "momentos": ("momento", "Momentos Concentrados", "Momento Concentrado"),
+            "distribuidas": ("distrib", "Cargas Distribuídas", "Distribuída Constante"),
         }
         
         if tipo_carga in tipo_map:
-            tipo_filtro, titulo = tipo_map[tipo_carga]
+            tipo_filtro, titulo, tipo_modal_default = tipo_map[tipo_carga]
             
             tk.Label(
                 self.panel_body, text=titulo,
@@ -1237,16 +1266,25 @@ class VigaApp(tk.Tk):
             lista_frame = tk.Frame(self.panel_body, bg=CORES["bg_canvas"])
             lista_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
             
-            # Treeview para cargas
-            colunas = ("tipo", "detalhes")
+            # Colunas específicas por tipo
+            if tipo_filtro == "pontual":
+                colunas = ("pos", "val")
+                headings = [("pos", "Pos. (m)", 80), ("val", "Valor (N)", 110)]
+            elif tipo_filtro == "momento":
+                colunas = ("pos", "val")
+                headings = [("pos", "Pos. (m)", 80), ("val", "Valor (N.m)", 110)]
+            else:
+                colunas = ("xi", "xf", "qi", "qf")
+                headings = [("xi", "x ini", 50), ("xf", "x fim", 50),
+                            ("qi", "q ini", 55), ("qf", "q fim", 55)]
+            
             self.tree_cargas = ttk.Treeview(
                 lista_frame, columns=colunas,
-                show="headings", height=5
+                show="headings", height=6
             )
-            self.tree_cargas.heading("tipo", text="Tipo")
-            self.tree_cargas.heading("detalhes", text="Detalhes")
-            self.tree_cargas.column("tipo", width=100)
-            self.tree_cargas.column("detalhes", width=200)
+            for col, head, w in headings:
+                self.tree_cargas.heading(col, text=head)
+                self.tree_cargas.column(col, width=w, anchor="center")
             
             # Scrollbar
             scrollbar = ttk.Scrollbar(
@@ -1259,18 +1297,19 @@ class VigaApp(tk.Tk):
             scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             
             # Preencher com cargas existentes do tipo filtrado
+            self._tree_tipo_atual = tipo_filtro
             for i, c in enumerate(self.cargas_adicionadas):
                 if c["tipo"] == tipo_filtro:
-                    self._adicionar_item_tree(c, i)
+                    self._adicionar_item_tree_tipado(c, i, tipo_filtro)
             
             # Botões
             btn_frame = tk.Frame(self.panel_body, bg=CORES["bg_panel"])
             btn_frame.pack(fill=tk.X, pady=(0, 5))
             
             DarkButton(
-                btn_frame, text="➕ Nova Carga",
+                btn_frame, text="➕ Adicionar",
                 bg=CORES["primary"],
-                command=lambda: self._abrir_modal_carga()
+                command=lambda t=tipo_modal_default: self._abrir_modal_carga_tipo(t)
             ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
             
             DarkButton(
@@ -1279,21 +1318,34 @@ class VigaApp(tk.Tk):
                 command=self._remover_carga_selecionada
             ).pack(side=tk.RIGHT)
     
-    def _adicionar_item_tree(self, carga, idx):
-        """Adiciona uma carga à treeview."""
-        tipo_str = carga.get("tipo_str", "")
-        if carga["tipo"] == "pontual":
-            detalhe = f"{carga['val']:.1f} N em x={carga['pos']:.1f}m"
-        elif carga["tipo"] == "momento":
-            detalhe = f"{carga['val']:.1f} N.m em x={carga['pos']:.1f}m"
+    def _adicionar_item_tree_tipado(self, carga, idx, tipo_filtro):
+        """Adiciona uma carga à treeview com colunas específicas do tipo."""
+        if not self.tree_cargas:
+            return
+        if tipo_filtro == "pontual":
+            values = (f"{carga['pos']:.2f}", f"{carga['val']:.2f}")
+        elif tipo_filtro == "momento":
+            values = (f"{carga['pos']:.2f}", f"{carga['val']:.2f}")
         else:
-            if abs(carga['qi'] - carga['qf']) < 1e-6:
-                detalhe = f"{carga['qi']:.1f} N/m de x={carga['xi']:.1f} a {carga['xf']:.1f}m"
-            else:
-                detalhe = f"{carga['qi']:.1f}→{carga['qf']:.1f} N/m"
-        
-        if self.tree_cargas:
-            self.tree_cargas.insert("", tk.END, iid=str(idx), values=(tipo_str, detalhe))
+            qf = carga.get('qf', carga.get('qi', 0))
+            values = (f"{carga['xi']:.2f}", f"{carga['xf']:.2f}",
+                      f"{carga['qi']:.2f}", f"{qf:.2f}")
+        self.tree_cargas.insert("", tk.END, iid=str(idx), values=values)
+    
+    def _adicionar_item_tree(self, carga, idx):
+        """Adiciona uma carga à treeview (compatibilidade)."""
+        tipo_filtro = carga.get("tipo", "pontual")
+        self._adicionar_item_tree_tipado(carga, idx, tipo_filtro)
+    
+    def _abrir_modal_carga_tipo(self, tipo_default):
+        """Abre o modal para adicionar uma carga com tipo pré-selecionado."""
+        if self.comprimento_viga <= 0:
+            DialogoErro(
+                self, "Geometria Necessária",
+                "Defina o comprimento da viga antes de adicionar cargas."
+            )
+            return
+        ModalNovaCarga(self, self.comprimento_viga, self._receber_nova_carga, tipo_default)
     
     # ══════════════════════════════════════════════════════════════════════════
     # AÇÕES DO USUÁRIO
@@ -1327,6 +1379,8 @@ class VigaApp(tk.Tk):
                 if btn.active:
                     self._render_panel(key)
                     break
+
+            self.processar()
             
             if self.status_label:
                 self.status_label.config(text=f"✅ Geometria aplicada: L={L:.1f}m")
@@ -1363,6 +1417,9 @@ class VigaApp(tk.Tk):
             self.pos_apoio_a = pos_a
             
             self._renderizar_esquema()
+
+            self.processar()
+
             if self.status_label:
                 self.status_label.config(
                     text=f"✅ Apoios configurados: {tipo} (xA={pos_a:.1f}m)"
@@ -1396,6 +1453,7 @@ class VigaApp(tk.Tk):
                 break
         
         self._renderizar_esquema()
+        self.processar()
     
     def _remover_carga_selecionada(self):
         """Remove a carga selecionada na treeview."""
@@ -1415,6 +1473,7 @@ class VigaApp(tk.Tk):
                         break
                 
                 self._renderizar_esquema()
+                self.processar()
                 if self.status_label:
                     self.status_label.config(text="🗑 Carga removida")
     
